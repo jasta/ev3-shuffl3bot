@@ -1,0 +1,3 @@
+[submodule "fake-sys"]
+	path = fake-sys
+	url = https://github.com/ddemidov/ev3dev-lang-fake-sys.git
