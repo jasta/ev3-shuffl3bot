@@ -56,7 +56,7 @@ class ShuffleBotMachine:
     # Arm is raised but in a position that would permit holding onto a grabbed object.
     UP_HOLDING = ArmStateDesc(name = "UP_HOLDING", direction = 1, absolute_position = -72)
 
-    _states = (PRESSED_DOWN, CONFIRMING_GRAB, FAKE_PRESSED_DOWN, UP_RELEASED, UP_HOLDING)
+    ARM_STATES = (PRESSED_DOWN, CONFIRMING_GRAB, FAKE_PRESSED_DOWN, UP_RELEASED, UP_HOLDING)
 
     # We actually define 6 separate columns for only 4 card stacks because the entire gantry machine is technically offset slightly
     # such that the left and right-most stacks don't pick up or drop off centered on the card.  To account for this we need the machine
@@ -79,7 +79,14 @@ class ShuffleBotMachine:
         -1,
     )
 
-    STACK_RIGHT_DROP_OFF_POSITIONS = (
+    STACK_DROP_COLUMNS = (
+        -1,
+        1,
+        3,
+        5,
+    )
+
+    STACK_RIGHT_DROP_COLUMNS = (
         -1,
         2,
         4,
@@ -89,26 +96,27 @@ class ShuffleBotMachine:
     INPUT_COLUMN_INDEX = 0
     OUTPUT_COLUMN_INDEX = 3
 
+    UP_DOWN_AXIS = MovementAxis(
+        name = 'UpDownMotor',
+        motor = MediumMotor(OUTPUT_D),
+        stable_range = range(0, -260, -1),
+        zeroed_direction = 1, # UP
+        init_speed_removeme = SpeedDPS(50),
+        nominal_speed = SpeedPercent(50),
+        ramp_up_sp = 0,
+        ramp_down_sp = 0)
+    LEFT_RIGHT_AXIS = MovementAxis(
+        name = 'LeftRightMotor',
+        motor = MediumMotor(OUTPUT_A),
+        stable_range = range(0, 545),
+        zeroed_direction = -1, # RIGHT
+        init_speed_removeme = SpeedDPS(100),
+        nominal_speed = SpeedPercent(80),
+        ramp_up_sp = 0,
+        ramp_down_sp = 200)
+
     def __init__(self) -> None:
-        up_down_axis = MovementAxis(
-            name = 'UpDownMotor',
-            motor = MediumMotor(OUTPUT_D),
-            stable_range = range(0, -260, -1),
-            zeroed_direction = 1, # UP
-            init_speed_removeme = SpeedDPS(50),
-            nominal_speed = SpeedPercent(50),
-            ramp_up_sp = 0,
-            ramp_down_sp = 0)
-        left_right_axis = MovementAxis(
-            name = 'LeftRightMotor',
-            motor = MediumMotor(OUTPUT_A),
-            stable_range = range(0, 543),
-            zeroed_direction = -1, # RIGHT
-            init_speed_removeme = SpeedDPS(100),
-            nominal_speed = SpeedPercent(80),
-            ramp_up_sp = 0,
-            ramp_down_sp = 200)
-        self.gantry = TwoAxisGantryMachine(self._states, up_down_axis, left_right_axis)
+        self.gantry = TwoAxisGantryMachine(self.ARM_STATES, self.COLUMN_POSITIONS, self.UP_DOWN_AXIS, self.LEFT_RIGHT_AXIS)
 
     def calibrate_manually_as_top_right(self):
         self.gantry.calibrate_manually_as_top_right()
@@ -142,15 +150,16 @@ class ShuffleBotMachine:
         self.move_item(None, None)
 
     def _stack_translation_to_column_moves(self, from_stack, to_stack) -> list:
-        grab_cols = self.STACK_GRAB_COLUMNS
-        right_drop_cols = self.STACK_RIGHT_DROP_OFF_POSITIONS
+        which_drop_columns = None
         if from_stack == 0:
             if to_stack == 3:
                 return self._stack_translation_to_column_moves(0, 2) + self._stack_translation_to_column_moves(2, 3)
             else:
-                return [ (grab_cols[0], right_drop_cols[to_stack]) ]
+                which_drop_columns = self.STACK_RIGHT_DROP_COLUMNS
         else:
-            return [ (grab_cols[from_stack], grab_cols[to_stack]) ]
+            which_drop_columns = self.STACK_DROP_COLUMNS
+
+        return [ (self.STACK_GRAB_COLUMNS[from_stack], which_drop_columns[to_stack]) ]
 
 class TwoAxisGantryMachine:
 
@@ -158,11 +167,12 @@ class TwoAxisGantryMachine:
     current_column = None
     is_calibrated = False
 
-    def __init__(self, states, up_down_axis: MovementAxis, left_right_axis: MovementAxis) -> None:
+    def __init__(self, arm_states, column_positions, up_down_axis: MovementAxis, left_right_axis: MovementAxis) -> None:
         self.up_down_axis = up_down_axis
         self.left_right_axis = left_right_axis
         self.axes = (up_down_axis, left_right_axis, )
-        self.arm_states = states
+        self.arm_states = arm_states
+        self.column_positions = column_positions
         debug_print(self.axes)
 
     def _calibrate_individual(self, axis: MovementAxis, direction: int, speed: SpeedValue, calibrationTarget: int):
@@ -267,7 +277,7 @@ class TwoAxisGantryMachine:
             return
 
         debug_print("Translating arm to {}...".format(column_index))
-        self._translate_arm_raw(self.COLUMN_POSITIONS[column_index])
+        self._translate_arm_raw(self.column_positions[column_index])
         debug_print("...done")
 
         self.current_column = column_index
@@ -310,16 +320,30 @@ class FiguringStuffOutBebot:
         machine.calibrate_manually_as_top_right()
         sound.speak('Ready!')
         moves = (
-            (1, 2),
-            (1, 2),
-            (0, 2),
-            (1, 2),
-            (2, 0),
+(0, 1),
+(0, 2),
+(0, 1),
+(0, 3),
+(0, 2),
+(0, 1),
+(0, 2),
+(0, 1),
+(0, 2),
+(0, 1),
+(0, 2),
+(0, 1),
+(0, 2),
+(0, 1),
+(0, 2),
+(0, 1),
+(0, 2),
+(0, 1),
+(0, 2),
         )
         for move in moves:
             src = move[0]
             dst = move[1]
-            sound.speak('Moving {} to {}'.format(src, dst))
+            sound.speak('Moving {} to {}'.format(src, dst), play_type = Sound.PLAY_NO_WAIT_FOR_COMPLETE)
             machine.move_item(src, dst)
 
     def up_down_test(self):
@@ -385,7 +409,7 @@ def main():
         ev3dev2.Device.DEVICE_ROOT_PATH = os.path.join(fake_sys, 'arena')
 
     #fucking_around()
-    FiguringStuffOutBebot().up_down_test()
+    FiguringStuffOutBebot().move_items()
 
 if __name__ == '__main__':
     main()
