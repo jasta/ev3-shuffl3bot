@@ -2,6 +2,14 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: moves_generator.py",
+            "type": "python",
+            "request": "launch",
+            "program": "moves_generator.py",
+            "console": "integratedTerminal",
+            "args": ["--deck-size", "10", "--num-stacks", "4", "--input-stack", "0", "--output-stack", "3"],
+        },
+        {
             "name": "Download and Run Current File",
             "type": "ev3devBrowser",
             "request": "launch",
