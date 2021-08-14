@@ -43,9 +43,9 @@ class ArmStateDesc:
 
 # Implements the specific geometry of the shuffle bot, with all its weird mechanical quirks :)
 class ShuffleBotMachine:
-    STACK_COUNT = 4
+    STACK_COUNT = 3
     INPUT_STACK_INDEX = 0
-    OUTPUT_STACK_INDEX = 3
+    OUTPUT_STACK_INDEX = 2
 
     # Arm is fully pressed down with some amount of "pressure" applied.
     PRESSED_DOWN = ArmStateDesc(name = "PRESSED_DOWN", direction = -1, resistance_range = range(-120, -9999, -1), max_resistance_before_stop = 0.50)
@@ -54,9 +54,6 @@ class ShuffleBotMachine:
     # any more force by accelerating upward.
     CONFIRMING_GRAB = ArmStateDesc(name = "CONFIRMING_GRAB", direction = 1, relative_position = 80)
 
-    # Just for testing pretend to go down but don't push hard...
-    FAKE_PRESSED_DOWN = ArmStateDesc(name = "FAKE_PRESSED_DOWN", direction = -1, absolute_position = -220)
-
     # Arm is fully raised in the "release" position (a physical obstruction exists along the grabber arm path such that
     # no object should be grabbed in this state).
     UP_RELEASED = ArmStateDesc(name = "UP_RELEASED", direction = 1, absolute_position = -2)
@@ -64,44 +61,13 @@ class ShuffleBotMachine:
     # Arm is raised but in a position that would permit holding onto a grabbed object.
     UP_HOLDING = ArmStateDesc(name = "UP_HOLDING", direction = 1, absolute_position = -72)
 
-    ARM_STATES = (PRESSED_DOWN, CONFIRMING_GRAB, FAKE_PRESSED_DOWN, UP_RELEASED, UP_HOLDING)
+    ARM_STATES = (PRESSED_DOWN, CONFIRMING_GRAB, UP_RELEASED, UP_HOLDING)
 
-    # We actually define 6 separate columns for only 4 card stacks because the entire gantry machine is technically offset slightly
-    # such that the left and right-most stacks don't pick up or drop off centered on the card.  To account for this we need the machine
-    # to understand that some adjustments are required when going from the first stack or to the last stack.  For example,
-    # to drop a card off from stack[0] to stack[1], we actually translate from column[0] to column[2] to account for the offset.  To
-    # then move that card from stack[1] to stack[2] we'd go from column[2] to column[3] per normal.
     COLUMN_POSITIONS = (
-        543,
-        393,
-        326, # Offset position for stack[1]
-        172,
-        119, # Offset position for stack[2]
-        0,
+        508,
+        282,
+        41,
     )
-
-    STACK_CENTER_GRAB_COLUMNS = (
-        -1,
-        1,
-        3,
-        -1,
-    )
-
-    STACK_RIGHT_GRAB_COLUMNS = (
-        0,
-        2,
-        4,
-        -1,
-    )
-
-    STACK_LEFT_OR_CENTER_DROP_COLUMNS = (
-        -1,
-        1,
-        3,
-        5,
-    )
-
-    STACK_RIGHT_DROP_COLUMNS = STACK_RIGHT_GRAB_COLUMNS
 
     INPUT_COLUMN_INDEX = 0
     OUTPUT_COLUMN_INDEX = 3
@@ -135,14 +101,9 @@ class ShuffleBotMachine:
         self.gantry.reset_positions()
 
     def move_item(self, from_stack, to_stack):
-        if from_stack is None and to_stack is None:
-            self._move_column_raw(None, None)
-        else:
-            column_moves = self._stack_translation_to_column_moves(from_stack, to_stack)
-            for column_move in column_moves:
-                self._move_column_raw(column_move[0], column_move[1])
+        self._move_to_column(from_stack, to_stack)
 
-    def _move_column_raw(self, from_column, to_column):
+    def _move_to_column(self, from_column, to_column):
         gantry = self.gantry
 
         if from_column == to_column and from_column is not None:
@@ -159,23 +120,6 @@ class ShuffleBotMachine:
 
     def grab_test(self):
         self.move_item(None, None)
-
-    def _stack_translation_to_column_moves(self, from_stack, to_stack) -> list:
-        columns = None
-        if from_stack == 0 or to_stack == 0:
-            if to_stack == 3:
-                return self._stack_translation_to_column_moves(0, 2) + self._stack_translation_to_column_moves(2, 3)
-            else:
-                columns = (self.STACK_RIGHT_GRAB_COLUMNS, self.STACK_RIGHT_DROP_COLUMNS)
-        else:
-            columns = (self.STACK_CENTER_GRAB_COLUMNS, self.STACK_LEFT_OR_CENTER_DROP_COLUMNS)
-
-        from_column = columns[0][from_stack]
-        to_column = columns[1][to_stack]
-        if from_column == -1 or to_column == -1:
-            raise Exception('Illegal move: {} to {}'.format(from_column, to_column))
-
-        return [ (from_column, to_column) ]
 
 class TwoAxisGantryMachine:
 
