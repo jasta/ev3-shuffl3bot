@@ -501,25 +501,6 @@ class FiguringStuffOutBebot:
             sound.beep()
             sleep(2)
 
-def fucking_around():
-    b = Button()
-    s = Sound()
-    m = LargeMotor(OUTPUT_A)
-    while True:
-        debug_print("Waiting for ENTER...")
-        b.wait_for_released('enter')
-        s.beep()
-        m.on(SpeedPercent(10))
-        startPos = m.position
-        while m.wait_until_not_moving(timeout = 100) is False:
-            currentPos = m.position
-            offsetDegrees = abs(currentPos - startPos) % 360
-            debug_print("Current speed is: {} (of {})".format(m.speed, m.speed_sp))
-            debug_print("Offset is {}".format(offsetDegrees))
-            debug_print("State is: {}".format(m.state))
-        debug_print("State is now: {}".format(m.state))
-        m.stop()
-
 def main():
     if ev3dev2.get_current_platform() == "fake":
         fake_sys = os.path.join(os.path.dirname(__file__), 'fake-sys')
