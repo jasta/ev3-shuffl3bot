@@ -74,9 +74,9 @@ class ShuffleBotMachine:
     COLUMN_POSITIONS = (
         543,
         393,
-        313, # Offset position for stack[1]
+        326, # Offset position for stack[1]
         172,
-        94, # Offset position for stack[2]
+        119, # Offset position for stack[2]
         0,
     )
 
@@ -156,7 +156,6 @@ class ShuffleBotMachine:
         if to_column is not None:
             gantry.translate_arm_to_column(to_column)
         gantry.set_arm_state(self.UP_RELEASED)
-        gantry.set_arm_state(self.UP_HOLDING)
 
     def grab_test(self):
         self.move_item(None, None)
@@ -259,7 +258,7 @@ class TwoAxisGantryMachine:
         
         for axis in (self.up_down_axis, self.left_right_axis):
             motor = axis.motor
-            self._to_position_with_brake(motor, speed = axis.init_speed_removeme, position = 0)
+            self._on_to_position_with_stop(motor, speed = axis.init_speed_removeme, position = 0, stop_action = Motor.STOP_ACTION_BRAKE)
 
     def calibrate_automatically_wip(self):
         raise Exception("This probably will break your machine, not well tested or adjusted yet...")
@@ -300,9 +299,9 @@ class TwoAxisGantryMachine:
             if resolved_position not in axis.stable_range:
                 raise Exception("Calibration or configuration error, illegal position: {}".format(resolved_position))
 
-            self._to_position_with_brake(axis.motor, speed, resolved_position)
+            self._on_to_position_with_stop(axis.motor, speed, resolved_position, Motor.STOP_ACTION_HOLD)
 
-        debug_print("...done")
+        debug_print("...done, up-down motor at {}".format(axis.motor.position))
 
     def translate_arm_to_column(self, column_index):
         if self.current_column == column_index:
@@ -310,7 +309,7 @@ class TwoAxisGantryMachine:
 
         debug_print("Translating arm to {}...".format(column_index))
         self._translate_arm_raw(self.column_positions[column_index])
-        debug_print("...done")
+        debug_print("...done, left-right motor at {}".format(self.left_right_axis.motor.position))
 
         self.current_column = column_index
 
@@ -319,25 +318,25 @@ class TwoAxisGantryMachine:
         if absolute_position_sp not in axis.stable_range:
             raise Exception("Position out of range of {}: {}".format(axis.stable_range, absolute_position_sp))
 
-        self._to_position_with_brake(axis.motor, axis.nominal_speed, absolute_position_sp)
+        self._on_to_position_with_stop(axis.motor, axis.nominal_speed, absolute_position_sp, Motor.STOP_ACTION_HOLD)
 
     # Mysteriously, on_* commands all require a stop_action of either hold or coast, not break.  We don't want hold as we might
     # slightly overshoot our position or encounter some mechanical resistance and we want to just "let it go" and
     # adjust back into a clean spot.  I experimented with this very briefly and found that without this behaviour it was quite
     # easy to rip the chain off the left/right axis especially.
-    def _to_position_with_brake(self, motor: Motor, speed: SpeedValue, position: int):
+    def _on_to_position_with_stop(self, motor: Motor, speed: SpeedValue, position: int, stop_action: str):
         real_speed = speed.to_native_units(motor)
         motor.speed_sp = int(round(real_speed))
         motor.position_sp = position
-        motor.stop_action = Motor.STOP_ACTION_BRAKE
+        motor.stop_action = stop_action
         motor.run_to_abs_pos()
         motor.wait_until('running', timeout=100)
         motor.wait_until_not_moving()
 
-    def _on_with_brake(self, motor: Motor, speed: SpeedValue):
+    def _on_with_stop(self, motor: Motor, speed: SpeedValue, stop_action: str):
         real_speed = speed.to_native_units(motor)
         motor.speed_sp = int(round(real_speed))
-        motor.stop_action = Motor.STOP_ACTION_BRAKE
+        motor.stop_action = stop_action
         motor.run_forever()
 
 class SimpleGuiPrompt:
@@ -393,10 +392,13 @@ class ShuffleBotMain:
         sound.speak('Shuffling')
         solver = ShuffleSolver(deck_size, machine.STACK_COUNT, machine.INPUT_COLUMN_INDEX, machine.OUTPUT_COLUMN_INDEX)
         moves = solver.solve()
+        debug_print('Moves:')
+        for move in moves:
+            debug_print('  {} -> {}'.format(move[0], move[1]))
 
         sound.speak('Here we go, {} moves'.format(len(moves)))
 
-        progress_interval = 10
+        progress_interval = 25
         next_progress_notice = progress_interval
         for move_index in range(len(moves)):
             pct_complete = move_index / len(moves) * 100
