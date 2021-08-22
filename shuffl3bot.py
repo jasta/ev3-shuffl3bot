@@ -30,7 +30,7 @@ class MovementAxis:
         self.ramp_down_sp = ramp_down_sp
 
 class ArmStateDesc:
-    def __init__(self, name: str, direction: int, resistance_range = None, max_resistance_before_stop: float = None, absolute_position: int = None, relative_position: int = None) -> None:
+    def __init__(self, name: str, direction: int = None, resistance_range = None, max_resistance_before_stop: float = None, absolute_position: int = None, relative_position: int = None) -> None:
         self.name = name
         self.direction = direction
         self.resistance_range = resistance_range
@@ -44,33 +44,34 @@ class ArmStateDesc:
 # Implements the specific geometry of the shuffle bot, with all its weird mechanical quirks :)
 class ShuffleBotMachine:
     STACK_COUNT = 3
-    INPUT_STACK_INDEX = 0
-    OUTPUT_STACK_INDEX = 2
+    INPUT_COLUMN_INDEX = 0
+    OUTPUT_COLUMN_INDEX = 2
 
     # Arm is fully pressed down with some amount of "pressure" applied.
     PRESSED_DOWN = ArmStateDesc(name = "PRESSED_DOWN", direction = -1, resistance_range = range(-120, -9999, -1), max_resistance_before_stop = 0.50)
 
     # Arm is slightly raised after being pressed down to allow cards stuck to the bottom of the top card to fall before we add
     # any more force by accelerating upward.
-    CONFIRMING_GRAB = ArmStateDesc(name = "CONFIRMING_GRAB", direction = 1, relative_position = 80)
+    CONFIRMING_GRAB = ArmStateDesc(name = "CONFIRMING_GRAB", relative_position = 80)
 
     # Arm is fully raised in the "release" position (a physical obstruction exists along the grabber arm path such that
     # no object should be grabbed in this state).
-    UP_RELEASED = ArmStateDesc(name = "UP_RELEASED", direction = 1, absolute_position = -2)
+    UP_RELEASED = ArmStateDesc(name = "UP_RELEASED", absolute_position = -2)
+
+    # Special variation of UP_RELEASED that is slightly relaxed from the zeroed position as the machinery has slightly less
+    # friction when translating in this configuration.
+    UP_READY_TO_TRANSLATE = ArmStateDesc(name = 'UP_READY_TO_TRANSLATE', absolute_position = -15)
 
     # Arm is raised but in a position that would permit holding onto a grabbed object.
-    UP_HOLDING = ArmStateDesc(name = "UP_HOLDING", direction = 1, absolute_position = -72)
+    UP_HOLDING = ArmStateDesc(name = "UP_HOLDING", absolute_position = -72)
 
-    ARM_STATES = (PRESSED_DOWN, CONFIRMING_GRAB, UP_RELEASED, UP_HOLDING)
+    ARM_STATES = (PRESSED_DOWN, CONFIRMING_GRAB, UP_RELEASED, UP_READY_TO_TRANSLATE, UP_HOLDING)
 
     COLUMN_POSITIONS = (
         508,
         282,
         41,
     )
-
-    INPUT_COLUMN_INDEX = 0
-    OUTPUT_COLUMN_INDEX = 3
 
     UP_DOWN_AXIS = MovementAxis(
         name = 'UpDownMotor',
@@ -117,6 +118,7 @@ class ShuffleBotMachine:
         if to_column is not None:
             gantry.translate_arm_to_column(to_column)
         gantry.set_arm_state(self.UP_RELEASED)
+        gantry.set_arm_state(self.UP_READY_TO_TRANSLATE)
 
     def grab_test(self):
         self.move_item(None, None)
