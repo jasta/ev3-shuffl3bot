@@ -102,13 +102,10 @@ class SoftwareMechanicalLocking:
       self.other_motors = other_motors
 
     def __str__(self):
-      return 'MotorLockingThread-'.format(self.my_motor.name)
+      return 'MotorLockingThread-{}'.format(self.my_motor.name)
 
     def run(self):
-      try:
-        self.do_run()
-      finally:
-        sys.exit(1)
+      self.do_run()
 
     def do_run(self):
       sample_tick_ms = 50
@@ -117,111 +114,21 @@ class SoftwareMechanicalLocking:
       while not self.stop_event.is_set():
         with self.state_lock:
           debug_print('got here, hmm: {}'.format(self.my_motor.movement_desc_lambda))
-          run_desc = self.my_motor.movement_desc_lambda(self.user_data, self.my_motor, self.other_motors)
+          movement_desc = self.my_motor.movement_desc_lambda(self.user_data, self.my_motor, self.other_motors)
 
-        debug_print('{} run to: {}'.format(self.my_motor.name, run_desc.absolute_position))
-        if run_desc is not None:
-          if run_desc.absolute_position is not None:
-            self.my_motor.motor.on_to_position(run_desc.speed, run_desc.absolute_position, block = False)
+        debug_print('{} run to: {} @ {}'.format(self.my_motor.name, movement_desc.absolute_position, movement_desc.speed))
+        if movement_desc is not None or movement_desc.speed == 0:
+          if movement_desc.absolute_position is not None:
+            self.my_motor.motor.on_to_position(movement_desc.speed, movement_desc.absolute_position, block = False)
           else:
-            self.my_motor.motor.on(run_desc.speed)
+            self.my_motor.motor.on(movement_desc.speed)
+        else:
+          self.my_motor.motor.off()
 
         sleep(sample_tick_ms / 1000)
 
       debug_print('Stopped by caller!')
       self.my_motor.motor.off()
-
-class ArmStateDesc:
-  def __init__(self, name: str, pressure_range_pa: range):
-    self.name = name
-    self.pressure_range_pa = pressure_range_pa
-
-class PneumaticArmMachine:
-  STATE_GRABBED = ArmStateDesc('STATE_GRABBED', pressure_range_pa = range(70000, 20000, -1))
-  STATE_RELEASED = ArmStateDesc('STATE_RELEASED', pressure_range_pa = range(104000, 120000, 1))
-
-  _STATES = (STATE_GRABBED, STATE_RELEASED)
-
-  def __init__(self, pump, on_off_sensor: TouchSensor):
-    self.pump = pump
-    self.on_off_sensor = on_off_sensor
-    self.ready_to_actuate_event = Event()
-    self.ready_to_actuate_event.set()
-    self.current_state = None
-    self.automatic_thread = self.AutomaticGrabAndReleaseThread(self)
-
-  def calibrate_manually_at_pressed_down_and_outlet_open(self):
-    self.pump.calibrate_manually_at_pressed_down_and_outlet_open()
-    self.current_state = PneumaticArmMachine.STATE_RELEASED
-
-  def begin_automatic_grab_and_release(self):
-    self.automatic_thread.start()
-    pass
-
-  def end_automatic_grab_and_release(self):
-    self.automatic_thread.shutdown_event.set()
-    self.automatic_thread.join()
-
-  def toggle_grab_or_release(self):
-    if not self.ready_to_actuate_event.is_set():
-      debug_print('Serious state error, button pressed while actuating!')
-    else:
-      if self.current_state == PneumaticArmMachine.STATE_GRABBED:
-        desired_state = PneumaticArmMachine.STATE_RELEASED
-      else:
-        desired_state = PneumaticArmMachine.STATE_GRABBED
-      self.set_arm_state(desired_state)
-
-  def set_arm_state(self, arm_state: ArmStateDesc):
-    if arm_state not in PneumaticArmMachine._STATES:
-      raise Exception('Unsupported arm_state={}'.format(arm_state))
-    
-    if self.current_state == arm_state:
-      return
-
-    debug_print('Setting arm state to {}'.format(arm_state.name))
-    self._pump_until(desired_pressure_range_pa = arm_state.pressure_range_pa)
-    self.current_state = arm_state
-
-  def get_arm_state(self):
-    return self.current_state
-
-  def _pump_until(self, desired_pressure_range_pa: range):
-    debug_print('Waiting for pump to become idle...')
-    self.ready_to_actuate_event.wait()
-    self.ready_to_actuate_event.clear()
-    current_pressure = self.pump.get_current_pressure_pa()
-    if current_pressure < min(desired_pressure_range_pa):
-      mode = VacuumPumpMachine.MODE_COMPRESSOR
-    elif current_pressure > max(desired_pressure_range_pa):
-      mode = VacuumPumpMachine.MODE_VACUUM
-    else:
-      mode = None
-
-    if mode is None:
-      debug_print('Pressure already in range at: {}'.format(current_pressure))
-    else:
-      debug_print('Pumping to reach pressure: {}'.format(desired_pressure_range_pa))
-      self.pump.on(mode)
-      self.pump.wait_until(desired_pressure_range_pa)
-      self.pump.off()
-
-    self.ready_to_actuate_event.set()
-    pass
-
-  class AutomaticGrabAndReleaseThread(Thread):
-    def __init__(self, arm_machine):
-      Thread.__init__(self, daemon = True)
-      self.shutdown_event = Event()
-      self.arm_machine = arm_machine
-
-    def __str__(self):
-      return "GrabAndRelease"
-
-    def run(self):
-      while not self.shutdown_event.is_set():
-        if self.arm_machine.on_off_sensor.wait_for_pressed(timeout_ms = 1000):
-          self.arm_machine._toggle_grab_or_release()
 
 class VacuumPumpMachine:
   EXPECTED_ROOM_PRESSURE_PA = range(104000, 110000)
@@ -237,6 +144,8 @@ class VacuumPumpMachine:
     self.switch_motor = MediumMotor(switch_motor_port)
     self.pressure_sensor = MSPressureSensor(pressure_sensor_port)
     self.is_calibrated = False
+    self.mode = None
+    self.desired_pressure_range_pa = None
     motors = []
     motors.append(LockableMotorDesc(self.cylinder_motor, 'cylinder', self._cylinder_lambda))
     motors.append(LockableMotorDesc(self.switch_motor, 'switch', self._switch_lambda))
@@ -257,7 +166,23 @@ class VacuumPumpMachine:
       raise Exception('Must calibrate machine first!')
 
   def _cylinder_lambda(dummy, self, my_motor: LockableMotorDesc, others):
-    return None
+    current_pressure = self.get_current_pressure_pa()
+    desired_pressure_range = self.desired_pressure_range_pa
+    min_range = min(desired_pressure_range)
+    max_range = max(desired_pressure_range)
+    if current_pressure < min_range:
+      pressure_diff = min_range - current_pressure
+    elif current_pressure > max_range:
+      pressure_diff = current_pressure - max_range
+    else:
+      pressure_diff = 0
+
+    debug_print('Pressure diff is: {}'.format(pressure_diff))
+
+    if pressure_diff == 0:
+      return MovementDesc(speed = 0)
+    else:
+      return MovementDesc(speed = VacuumPumpMachine.CYLINDER_MOTOR_SPEED, run_forever = True)
 
   def _switch_lambda(dummy, self, my_motor: LockableMotorDesc, others):
     cylinder_pos = others[0].motor.position
@@ -274,13 +199,13 @@ class VacuumPumpMachine:
     # medium motor has quite a bit of slop for such a high torque move...
     return MovementDesc(speed = VacuumPumpMachine.SWITCH_MOTOR_SPEED, absolute_position = left_or_right * 75)
 
-  def on(self, mode: int):
+  def on_and_hold_at(self, mode: int, desired_pressure_range_pa: range):
     self._ensure_calibrated()
 
     self.off()
 
     self.mode = mode
-    self.cylinder_motor.on(VacuumPumpMachine.CYLINDER_MOTOR_SPEED)
+    self.desired_pressure_range_pa = desired_pressure_range_pa
 
     debug_print('Starting mechanical lock...')
     self.mechanical_lock.start_locking()
@@ -311,6 +236,7 @@ class VacuumPumpMachine:
         sleep(sample_tick_ms / 1000)
 
       pressure = self.get_current_pressure_pa()
+      print('Pressure: {}'.format(pressure))
       debug_print('Pressure reading: {}'.format(pressure))
       if pressure in desired_pressure_range_pa:
         return True
@@ -318,17 +244,83 @@ class VacuumPumpMachine:
   def get_current_pressure_pa(self):
     return self.pressure_sensor.absolute_pressure_pa
 
+class ArmStateDesc:
+  def __init__(self, name: str, mode: int, pressure_range_pa: range):
+    self.name = name
+    self.mode = mode
+    self.pressure_range_pa = pressure_range_pa
+
+class PneumaticArmMachine:
+  STATE_GRABBED = ArmStateDesc('STATE_GRABBED', mode = VacuumPumpMachine.MODE_VACUUM, pressure_range_pa = range(70000, 20000, -1))
+  STATE_RELEASED = ArmStateDesc('STATE_RELEASED', mode = VacuumPumpMachine.MODE_COMPRESSOR, pressure_range_pa = range(104000, 120000, 1))
+
+  _STATES = (STATE_GRABBED, STATE_RELEASED)
+
+  def __init__(self, pump: VacuumPumpMachine, on_off_sensor: TouchSensor):
+    self.pump = pump
+    self.on_off_sensor = on_off_sensor
+    self.ready_to_actuate_event = Event()
+    self.ready_to_actuate_event.set()
+    self.automatic_thread = self.AutomaticGrabAndReleaseThread(self)
+    self.arm_state = None
+
+  def calibrate_manually_at_pressed_down_and_outlet_open(self):
+    self.pump.calibrate_manually_at_pressed_down_and_outlet_open()
+    self.arm_state = PneumaticArmMachine.STATE_RELEASED
+
+  def begin_automatic_grab_and_release(self):
+    self.automatic_thread.start()
+    pass
+
+  def end_automatic_grab_and_release(self):
+    self.automatic_thread.shutdown_event.set()
+    self.automatic_thread.join()
+
+  def is_successfully_grabbing(self):
+    current_pressure = self.pump.get_current_pressure_pa()
+    return current_pressure in PneumaticArmMachine.STATE_GRABBED.pressure_range_pa
+
+  def set_arm_state(self, arm_state: ArmStateDesc):
+    if arm_state not in PneumaticArmMachine._STATES:
+      raise Exception('Unsupported arm_state={}'.format(arm_state))
+    
+    if self.arm_state == arm_state:
+      return
+
+    debug_print('Setting arm state to {}'.format(arm_state.name))
+    self.pump.on_and_hold_at(arm_state.mode, arm_state.pressure_range_pa)
+
+  class AutomaticGrabAndReleaseThread(Thread):
+    def __init__(self, arm_machine):
+      Thread.__init__(self, daemon = True)
+      self.shutdown_event = Event()
+      self.arm_machine = arm_machine
+
+    def __str__(self):
+      return "GrabAndRelease"
+
+    def run(self):
+      while not self.shutdown_event.is_set():
+        if self.arm_machine.on_off_sensor.wait_for_pressed(timeout_ms = 1000):
+          self.arm_machine._toggle_grab_or_release()
+
 def main():
   sound = Sound()
   touch_sensor = TouchSensor(INPUT_1)
   pump = VacuumPumpMachine(cylinder_motor_port = OUTPUT_A, switch_motor_port = OUTPUT_D, pressure_sensor_port = INPUT_4)
   arm = PneumaticArmMachine(pump, on_off_sensor = touch_sensor)
   arm.calibrate_manually_at_pressed_down_and_outlet_open()
+
   while True:
-    sound.speak('Press button...')
+    sound.speak('Press button...', play_type = Sound.PLAY_NO_WAIT_FOR_COMPLETE)
     debug_print('Waiting for touch sensor...')
     if touch_sensor.wait_for_pressed():
-      arm.toggle_grab_or_release()
+      if arm.is_successfully_grabbing():
+        sound.speak('Releasing', play_type = Sound.PLAY_NO_WAIT_FOR_COMPLETE)
+        arm.set_arm_state(PneumaticArmMachine.STATE_RELEASED)
+      else:
+        sound.speak('Grabbing', play_type = Sound.PLAY_NO_WAIT_FOR_COMPLETE)
+        arm.set_arm_state(PneumaticArmMachine.STATE_GRABBED)
     
 if __name__ == "__main__":
   if ev3dev2.get_current_platform() == "fake":
