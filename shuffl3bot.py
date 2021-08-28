@@ -5,6 +5,7 @@ import random
 import sys
 import os
 from time import sleep
+from ev3dev2._platform.fake import OUTPUT_B, OUTPUT_C
 
 from ev3dev2.motor import MediumMotor, Motor, OUTPUT_A, OUTPUT_D, SpeedDPS, SpeedPercent, SpeedValue
 from ev3dev2.button import Button
@@ -19,12 +20,12 @@ def debug_print(*args, **kwargs):
     print(*args, **kwargs, file=sys.stderr)
 
 class MovementAxis:
-    def __init__(self, name: str, motor: Motor, stable_range, zeroed_direction, init_speed_removeme: SpeedDPS, nominal_speed: SpeedValue, ramp_up_sp: int, ramp_down_sp: int) -> None:
+    def __init__(self, name: str, motor: Motor, stable_range, zeroed_direction, calibrate_speed: SpeedDPS, nominal_speed: SpeedValue, ramp_up_sp: int, ramp_down_sp: int) -> None:
         self.name = name
         self.motor = motor
         self.stable_range = stable_range
         self.zeroed_direction = zeroed_direction
-        self.init_speed_removeme = init_speed_removeme
+        self.calibrate_speed = calibrate_speed
         self.nominal_speed = nominal_speed
         self.ramp_up_sp = ramp_up_sp
         self.ramp_down_sp = ramp_down_sp
@@ -43,9 +44,9 @@ class ArmStateDesc:
 
 # Implements the specific geometry of the shuffle bot, with all its weird mechanical quirks :)
 class ShuffleBotMachine:
-    STACK_COUNT = 3
-    INPUT_COLUMN_INDEX = 0
-    OUTPUT_COLUMN_INDEX = 2
+    STACK_COUNT = 9
+    INPUT_STACK_INDEX = 0
+    OUTPUT_STACK_INDEX = 2
 
     # Arm is fully pressed down with some amount of "pressure" applied.
     PRESSED_DOWN = ArmStateDesc(name = "PRESSED_DOWN", direction = -1, resistance_range = range(-120, -9999, -1), max_resistance_before_stop = 0.50)
@@ -67,10 +68,16 @@ class ShuffleBotMachine:
 
     ARM_STATES = (PRESSED_DOWN, CONFIRMING_GRAB, UP_RELEASED, UP_READY_TO_TRANSLATE, UP_HOLDING)
 
+    ROW_POSITIONS = (
+        84,
+        519,
+        957,
+    )
+
     COLUMN_POSITIONS = (
-        508,
-        282,
         41,
+        282,
+        508,
     )
 
     UP_DOWN_AXIS = MovementAxis(
@@ -78,61 +85,80 @@ class ShuffleBotMachine:
         motor = MediumMotor(OUTPUT_D),
         stable_range = range(0, -260, -1),
         zeroed_direction = 1, # UP
-        init_speed_removeme = SpeedDPS(50),
+        calibrate_speed = SpeedDPS(35),
         nominal_speed = SpeedPercent(50),
         ramp_up_sp = 0,
         ramp_down_sp = 0)
     LEFT_RIGHT_AXIS = MovementAxis(
         name = 'LeftRightMotor',
-        motor = MediumMotor(OUTPUT_A),
+        motor = MediumMotor(OUTPUT_B),
         stable_range = range(0, 545),
         zeroed_direction = -1, # RIGHT
-        init_speed_removeme = SpeedDPS(100),
+        calibrate_speed = None, # must manually calibrate for now...
+        nominal_speed = SpeedPercent(80),
+        ramp_up_sp = 0,
+        ramp_down_sp = 200)
+    FRONT_BACK_AXIS = MovementAxis(
+        name = 'FrontBackMotor',
+        motor = MediumMotor(OUTPUT_C),
+        stable_range = range(0, 1000), # TODO: didn't measure precisely
+        zeroed_direction = -1, # BACK
+        calibrate_speed = SpeedDPS(100),
         nominal_speed = SpeedPercent(80),
         ramp_up_sp = 0,
         ramp_down_sp = 200)
 
     def __init__(self) -> None:
-        self.gantry = TwoAxisGantryMachine(self.ARM_STATES, self.COLUMN_POSITIONS, self.UP_DOWN_AXIS, self.LEFT_RIGHT_AXIS)
+        self.gantry = ThreeAxisGantryMachine(self.ARM_STATES, self.UP_DOWN_AXIS, self.LEFT_RIGHT_AXIS, self.FRONT_BACK_AXIS)
 
-    def calibrate_manually_as_top_right(self):
-        self.gantry.calibrate_manually_as_top_right()
+    def calibate_manually_arm_is_furthest_from_motors(self):
+        self.gantry.calibrate_manually_arm_is_furthest_from_motors()
 
     def reset_positions(self):
         self.gantry.reset_positions()
 
     def move_item(self, from_stack, to_stack):
-        self._move_to_column(from_stack, to_stack)
+        self._move_to_stack(from_stack, to_stack)
 
-    def _move_to_column(self, from_column, to_column):
+    def _move_to_stack(self, from_stack, to_stack):
         gantry = self.gantry
 
-        if from_column == to_column and from_column is not None:
+        if from_stack == to_stack and from_stack is not None:
             return
-        if from_column is not None:
-            gantry.translate_arm_to_column(from_column)
+        if from_stack is not None:
+            self._translate_to_stack(from_stack)
         gantry.set_arm_state(self.PRESSED_DOWN)
         gantry.set_arm_state(self.CONFIRMING_GRAB)
         sleep(1.5)
         gantry.set_arm_state(self.UP_HOLDING)
-        if to_column is not None:
-            gantry.translate_arm_to_column(to_column)
+        if to_stack is not None:
+            self._translate_to_stack(to_stack)
         gantry.set_arm_state(self.UP_RELEASED)
         gantry.set_arm_state(self.UP_READY_TO_TRANSLATE)
+
+    def _translate_to_stack(self, stack_index):
+        rowcol = self._stack_to_rowcol(stack_index)
+        row_index = rowcol[0]
+        column_index = rowcol[1]
+        self.gantry.translate_arm_xy(self.ROW_POSITIONS[row_index], self.COLUMN_POSITIONS[column_index])
+
+    def _stack_to_rowcol(self, stack_index):
+        rows = len(self.ROW_POSITIONS)
+        return (int(stack_index / rows), stack_index % rows)
 
     def grab_test(self):
         self.move_item(None, None)
 
-class TwoAxisGantryMachine:
+class ThreeAxisGantryMachine:
 
-    def __init__(self, arm_states, column_positions, up_down_axis: MovementAxis, left_right_axis: MovementAxis) -> None:
+    def __init__(self, arm_states, up_down_axis: MovementAxis, left_right_axis: MovementAxis, front_back_axis: MovementAxis) -> None:
         self.up_down_axis = up_down_axis
         self.left_right_axis = left_right_axis
-        self.axes = (up_down_axis, left_right_axis, )
+        self.front_back_axis = front_back_axis
+        self.axes = (up_down_axis, left_right_axis, front_back_axis)
         self.arm_states = arm_states
-        self.column_positions = column_positions
         self.current_state = None
-        self.current_column = None
+        self.current_xy = None
         self.is_calibrated = False
 
     def _calibrate_individual(self, axis: MovementAxis, direction: int, speed: SpeedValue, calibrationTarget: int):
@@ -187,24 +213,33 @@ class TwoAxisGantryMachine:
 
         return abs(motor.position - startPos)
 
-    def calibrate_manually_as_top_right(self):
-        for axis in self.axes:
-            motor = axis.motor
+    def calibrate_manually_arm_is_furthest_from_motors(self):
+        for axis in self.axis:
+            axis.motor.off()
+            axis.motor.reset()
+            axis.motor.ramp_down_sp = axis.ramp_down_sp
+            axis.motor.ramp_up_sp = axis.ramp_up_sp
 
-            motor.reset()
+        # Automatically calibrate the torque safe axes.  The order is important here, up-down must go first to make sure
+        # the gantry can translate!
+        torque_safe_axes = (self.up_down_axis, self.front_back_axis)
+        for axis in torque_safe_axes:
+            self._on_with_stop(speed = axis.calibrate_speed * axis.zeroed_direction, stop_action = Motor.STOP_ACTION_BRAKE)
+            axis.motor.wait_until('running', 100)
+            axis.motor.wait_until_not_moving()
+            axis.motor.off()
+            axis.motor.reset()
 
-            motor.ramp_up_sp = axis.ramp_up_sp
-            motor.ramp_down_sp = axis.ramp_down_sp
-
+        self.current_xy = (0, 0)
         self.is_calibrated = True
 
     def reset_positions(self):
         if self.is_calibrated == False:
             raise Exception('Must be calibrated already!')
         
-        for axis in (self.up_down_axis, self.left_right_axis):
+        for axis in (self.up_down_axis, self.left_right_axis, self.front_back_axis):
             motor = axis.motor
-            self._on_to_position_with_stop(motor, speed = axis.init_speed_removeme, position = 0, stop_action = Motor.STOP_ACTION_BRAKE)
+            self._on_to_position_with_stop(motor, speed = axis.calibrate_speed, position = 0, stop_action = Motor.STOP_ACTION_BRAKE)
 
     def calibrate_automatically_wip(self):
         raise Exception("This probably will break your machine, not well tested or adjusted yet...")
@@ -249,35 +284,54 @@ class TwoAxisGantryMachine:
 
         debug_print("...done, up-down motor at {}".format(axis.motor.position))
 
-    def translate_arm_to_column(self, column_index):
-        if self.current_column == column_index:
+    def translate_arm_xy(self, x, y):
+        target_xy = (x, y)
+        if self.current_xy == target_xy:
             return
 
-        debug_print("Translating arm to {}...".format(column_index))
-        self._translate_arm_raw(self.column_positions[column_index])
-        debug_print("...done, left-right motor at {}".format(self.left_right_axis.motor.position))
+        debug_print("Translating arm to {}...".format(target_xy))
+        translate_axes = []
 
-        self.current_column = column_index
+        if self.current_xy.x != target_xy.x:
+            translate_axes.append((self.left_right_axis, x))
+        if self.current_xy.y != target_xy.y:
+            translate_axes.append((self.front_back_axis, y))
 
-    def _translate_arm_raw(self, absolute_position_sp: int):
-        axis = self.left_right_axis
-        if absolute_position_sp not in axis.stable_range:
-            raise Exception("Position out of range of {}: {}".format(axis.stable_range, absolute_position_sp))
+        # Get them both moving at the same time...
+        for (axis, position_sp) in translate_axes:
+            self._translate_arm_raw(axis, position_sp)
 
-        self._on_to_position_with_stop(axis.motor, axis.nominal_speed, absolute_position_sp, Motor.STOP_ACTION_HOLD)
+        # Then block waiting for both to stop moving.
+        for (axis, position_sp) in translate_axes:
+            axis.motor.wait_until('running', 100)
+            axis.motor.wait_until_not_moving()
+
+        debug_print("...done, motors that moved are now at:")
+        for (axis, position_sp) in translate_axes:
+            debug_print('    {}: {}'.format(axis.name, axis.motor.position))
+
+        self.current_xy = target_xy
+
+    def _translate_arm_raw(self, axis, position_sp: int):
+        if position_sp not in axis.stable_range:
+            raise Exception("Position out of range of {} {}: {}".format(axis.name, axis.stable_range, position_sp))
+
+        self._on_to_position_with_stop(axis.motor, axis.nominal_speed, position_sp, Motor.STOP_ACTION_HOLD, block = False)
 
     # Mysteriously, on_* commands all require a stop_action of either hold or coast, not break.  We don't want hold as we might
     # slightly overshoot our position or encounter some mechanical resistance and we want to just "let it go" and
     # adjust back into a clean spot.  I experimented with this very briefly and found that without this behaviour it was quite
     # easy to rip the chain off the left/right axis especially.
-    def _on_to_position_with_stop(self, motor: Motor, speed: SpeedValue, position: int, stop_action: str):
+    def _on_to_position_with_stop(self, motor: Motor, speed: SpeedValue, position: int, stop_action: str, block: bool = True):
         real_speed = speed.to_native_units(motor)
         motor.speed_sp = int(round(real_speed))
         motor.position_sp = position
         motor.stop_action = stop_action
         motor.run_to_abs_pos()
-        motor.wait_until('running', timeout=100)
-        motor.wait_until_not_moving()
+
+        if block:
+            motor.wait_until('running', timeout=100)
+            motor.wait_until_not_moving()
 
     def _on_with_stop(self, motor: Motor, speed: SpeedValue, stop_action: str):
         real_speed = speed.to_native_units(motor)
@@ -333,10 +387,10 @@ class ShuffleBotMain:
         debug_print('Running with deck size of {}'.format(deck_size))
 
         sound.speak('Manual calibration')
-        machine.calibrate_manually_as_top_right()
+        machine.calibate_manually_arm_is_furthest_from_motors()
 
         sound.speak('Shuffling')
-        solver = ShuffleSolver(deck_size, machine.STACK_COUNT, machine.INPUT_COLUMN_INDEX, machine.OUTPUT_COLUMN_INDEX)
+        solver = ShuffleSolver(deck_size, machine.STACK_COUNT, machine.INPUT_STACK_INDEX, machine.OUTPUT_STACK_INDEX)
         moves = solver.solve()
         debug_print('Moves:')
         for move in moves:
@@ -378,7 +432,7 @@ class FiguringStuffOutBebot:
         sound = self.sound
         machine = self.machine
         sound.speak('Calibrating...')
-        machine.calibrate_manually_as_top_right()
+        machine.calibate_manually_arm_is_furthest_from_motors()
         sound.speak('Ready!')
         moves = (
             (1, 2),
@@ -413,7 +467,7 @@ class FiguringStuffOutBebot:
         sound = self.sound
         machine = self.machine
         sound.speak('Calibrating...')
-        machine.calibrate_manually_as_top_right()
+        machine.calibate_manually_arm_is_furthest_from_motors()
         sound.speak('Ready!')
         for i in range(5):
             sound.speak('Grab test')
@@ -423,7 +477,7 @@ class FiguringStuffOutBebot:
         sound = self.sound
         gantry = self.machine
         sound.speak('Calibrating...')
-        gantry.calibrate_manually_as_top_right()
+        gantry.calibate_manually_arm_is_furthest_from_motors()
         gantry.set_arm_state(gantry.UP_HOLDING)
         sound.speak('Ready!')
         for i in range(10):
