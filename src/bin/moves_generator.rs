@@ -24,18 +24,15 @@ struct Opts {
 
 fn main() {
   let opts: Opts = Opts::parse();
-  println!("opts are {:?}", opts);
 
-  let mut solver = ShuffleSolver::new(ShuffleSolverOptions {
+  let solution = ShuffleSolver::solve(ShuffleSolverOptions {
     deck_size: opts.deck_size as usize,
     num_stacks: opts.num_stacks as usize,
     input_stack: opts.input_stack as usize,
     output_stack: opts.output_stack as usize
   });
 
-  let moves = solver.solve();
-  println!("Total moves: {}", moves.len());
-  for card_move in moves {
+  for card_move in solution.required_moves {
     println!("{} {}", card_move.src_stack, card_move.dst_stack);
   }
 }
@@ -57,7 +54,14 @@ struct ShuffleSolver {
 }
 
 impl ShuffleSolver {
-  pub fn new(options: ShuffleSolverOptions) -> Self {
+  pub fn solve(options: ShuffleSolverOptions) -> ShuffleSolution {
+    let mut solver = ShuffleSolver::init_internal(options);
+    solver.solve_internal();
+    solver.validate_solution();
+    return ShuffleSolution { required_moves: solver.required_moves };
+  }
+
+  fn init_internal(options: ShuffleSolverOptions) -> ShuffleSolver {
     let mut stacks: Vec<Vec<usize>> = Vec::with_capacity(options.num_stacks);
     for _ in 0..options.num_stacks {
       stacks.push(Vec::new());
@@ -71,10 +75,10 @@ impl ShuffleSolver {
 
     stacks[options.input_stack].append(&mut input_deck);
 
-    Self { options, stacks, desired_draw_order, required_moves: Vec::new() }
+    return ShuffleSolver { options, stacks, desired_draw_order, required_moves: Vec::new() };
   }
 
-  pub fn solve(&mut self) -> Vec<CardMove> {
+  fn solve_internal(&mut self) {
     // Loop backwards so that the top of the output stack (i.e. the last one we physically
     // move) is the 0th in the desired draw order.
     for next_desired_output_index in (0 .. self.desired_draw_order.len()).rev() {
@@ -87,8 +91,16 @@ impl ShuffleSolver {
       }
       self.move_card(which_stack_index, self.options.output_stack);
     }
+  }
 
-    return self.required_moves.to_vec();
+  fn validate_solution(&self) {
+    let mut other = ShuffleSolver::init_internal(ShuffleSolverOptions {
+      ..self.options
+    });
+    for card_move in &self.required_moves {
+      other.move_card(card_move.src_stack, card_move.dst_stack);
+    }
+    assert_eq!(self.stacks, other.stacks);
   }
 
   fn select_target_stack_naively(&self, src_stack_index: usize) -> Option<usize> {
@@ -119,11 +131,15 @@ impl ShuffleSolver {
 
     let card = self.stacks[src_stack_index].pop().unwrap();
     self.stacks[dst_stack_index].push(card);
-    self.required_moves.push(CardMove { src_stack: src_stack_index, dst_stack: dst_stack_index });
+    self.required_moves.push(CardMove { src_stack: src_stack_index, dst_stack:
+    dst_stack_index });
   }
 }
 
-#[derive(Copy, Clone)]
+struct ShuffleSolution {
+  required_moves: Vec<CardMove>
+}
+
 struct CardMove {
   src_stack: usize,
   dst_stack: usize,
