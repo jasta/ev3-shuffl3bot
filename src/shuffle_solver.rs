@@ -12,6 +12,7 @@ pub struct ShuffleSolution {
   pub required_moves: Vec<CardMove>
 }
 
+#[derive(Debug, PartialEq)]
 pub struct CardMove {
   pub src_stack: usize,
   pub dst_stack: usize,
@@ -28,13 +29,13 @@ pub struct ShuffleSolver {
 
 impl ShuffleSolver {
   pub fn solve(options: ShuffleSolverOptions) -> ShuffleSolution {
-    let mut solver = ShuffleSolver::init_internal(options);
+    let mut solver = ShuffleSolver::new_internal(options);
     solver.solve_internal();
     solver.validate_solution();
     return ShuffleSolution { required_moves: solver.required_moves };
   }
 
-  fn init_internal(options: ShuffleSolverOptions) -> ShuffleSolver {
+  fn new_internal(options: ShuffleSolverOptions) -> ShuffleSolver {
     let mut stacks: Vec<Vec<usize>> = Vec::with_capacity(options.num_stacks);
     for _ in 0..options.num_stacks {
       stacks.push(Vec::new());
@@ -67,7 +68,7 @@ impl ShuffleSolver {
   }
 
   fn validate_solution(&self) {
-    let mut other = ShuffleSolver::init_internal(ShuffleSolverOptions {
+    let mut other = ShuffleSolver::new_internal(ShuffleSolverOptions {
       ..self.options
     });
     for card_move in &self.required_moves {
@@ -106,5 +107,32 @@ impl ShuffleSolver {
     self.stacks[dst_stack_index].push(card);
     self.required_moves.push(CardMove { src_stack: src_stack_index, dst_stack:
     dst_stack_index });
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  #[should_panic]
+  fn test_illegal_input_output_stacks() {
+    ShuffleSolver::solve(ShuffleSolverOptions {
+      deck_size: 40,
+      num_stacks: 9,
+      input_stack: 10,
+      output_stack: 20,
+    });
+  }
+
+  #[test]
+  fn test_happy_path() {
+    let solution = ShuffleSolver::solve(ShuffleSolverOptions {
+      deck_size: 40,
+      num_stacks: 9,
+      input_stack: 0,
+      output_stack: 2,
+    });
+    assert_ne!(solution.required_moves, vec![]);
   }
 }
