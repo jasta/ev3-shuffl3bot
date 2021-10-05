@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from enum import Enum
 import random
 import sys
 import os
@@ -8,7 +7,6 @@ from time import sleep
 from ev3dev2._platform.fake import OUTPUT_B, OUTPUT_C
 
 from ev3dev2.motor import MediumMotor, Motor, OUTPUT_A, OUTPUT_D, SpeedDPS, SpeedPercent, SpeedValue
-from ev3dev2.button import Button
 from ev3dev2.sound import Sound
 from ev3dev2.led import Leds
 from ev3dev2.button import Button
