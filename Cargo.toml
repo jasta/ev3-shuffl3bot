@@ -2,6 +2,7 @@
 name = "ev3-shuffl3bot"
 version = "0.1.0"
 authors = ["Josh Guilfoyle <jasta@devtcg.org>"]
+edition = "2018"
 
 [dependencies]
 clap = "3.0.0-beta.4"
