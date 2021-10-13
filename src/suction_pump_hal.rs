@@ -1,13 +1,8 @@
-use std::sync::Arc;
-
-use futures_signals::signal::MutableSignalCloned;
 use thiserror::Error;
 
 use crate::suction_pump_machine::PumpDirection;
 
-pub type PressureSensorReading = Result<i32, HalError>;
-
-#[derive(Error, Debug)]
+#[derive(Error, PartialEq, Clone, Debug)]
 pub enum HalError {
   #[error("{0}")]
   DeviceNotConnected(String),
@@ -18,7 +13,8 @@ pub enum HalError {
 pub type HalResult<T> = Result<T, HalError>;
 
 pub trait SuctionPumpHal {
-  fn pressure_sensor_signal(&self) -> MutableSignalCloned<Arc<PressureSensorReading>>;
-  fn start_pump_motor(&self, direction: PumpDirection) -> HalResult<()>;
-  fn stop_pump_motor(&self) -> HalResult<()>;
+  fn pressure_sensor_frequency_hz(&self) -> HalResult<u32>;
+  fn get_pressure_pa(&self) -> HalResult<i32>;
+  fn start_pump_motor(&mut self, direction: PumpDirection) -> HalResult<()>;
+  fn stop_pump_motor(&mut self) -> HalResult<()>;
 }

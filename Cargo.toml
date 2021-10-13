@@ -12,7 +12,8 @@ ev3dev-lang-rust-derive = "0.10.0"
 cursive = { version = "0.16.3", default-features = false, features = ["termion-backend" ] }
 anyhow = "1.0.44"
 finny = "0.1.1"
+futures = "0.3.17"
 futures-signals = "0.3.22"
-tokio = { version = "1.12.0", features = [ "time", "rt" ] }
+tokio = { version = "1.12.0", features = [ "time", "rt", "macros", "sync", "test-util" ] }
 thiserror = "1.0.30"
 derive-new = "0.5.9"
