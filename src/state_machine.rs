@@ -10,15 +10,13 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::task::{JoinError, JoinHandle, spawn_blocking};
 
-pub struct Context<C, E> {
-  pub user: C,
-  tx: Sender<InternalEvent<E>>,
-}
+pub trait StateMachineDescriptor {
+  type Context: Default;
+  type Event: Debug;
 
-impl<C, E> Context<C, E> {
-  pub fn dispatcher(&self) -> Dispatcher<E> {
-    Dispatcher { tx: self.tx.clone() }
-  }
+  fn debug_name() -> &'static str;
+  fn states() -> StateGraph<Self::Context, Self::Event>;
+  fn new_context() -> Self::Context { Self::Context::default() }
 }
 
 pub trait State {
@@ -30,6 +28,27 @@ pub trait State {
 
   #[must_use]
   fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event>;
+}
+
+pub struct Context<C, E> {
+  pub user: C,
+  tx: Sender<InternalEvent<E>>,
+}
+
+impl<C, E> Context<C, E> {
+  pub fn dispatcher(&self) -> Dispatcher<E> {
+    Dispatcher { tx: self.tx.clone() }
+  }
+}
+
+pub struct Dispatcher<E> {
+  tx: Sender<InternalEvent<E>>,
+}
+
+impl<E> Dispatcher<E> {
+  pub async fn dispatch(&self, event: E) {
+    self.tx.send(InternalEvent::UserEvent(event, HANDLE_BY_SUBSTATE)).await;
+  }
 }
 
 pub type HandleResult<E> = Result<Transition, NotHandled<E>>;
@@ -58,6 +77,51 @@ pub enum NotHandled<E> {
 pub struct StateMachine<C, E> {
   tx: Sender<InternalEvent<E>>,
   join_handle: JoinHandle<C>,
+}
+
+impl<C: Send + 'static, E: Debug + Send + 'static> StateMachine<C, E> {
+  pub fn start<D: StateMachineDescriptor<Context = C, Event = E>>() -> Self {
+    let (tx, rx) = tokio::sync::mpsc::channel(32);
+    let tx_inner = tx.clone();
+    let join_handle = tokio::spawn(async move {
+      let context = Context {
+        user: D::new_context(),
+        tx: tx_inner,
+      };
+      let dispatcher = context.dispatcher();
+      let states = D::states();
+      let initial_state_id = states.initial_state.unwrap();
+      let mut internal = StateMachineInternal {
+        debug_name: D::debug_name(),
+        context,
+        dispatcher,
+        states,
+        current_states: vec![],
+        rx,
+        front_of_queue_events: VecDeque::new(),
+        deferred_events: VecDeque::new(),
+      };
+      internal.enter_initial_states(initial_state_id);
+      internal.handle_events().await;
+
+      // Give the context back to the caller on shutdown so they can inspect the results.  Mostly
+      // this is useful for testing though.
+      internal.context.user
+    });
+    Self {
+      tx,
+      join_handle,
+    }
+  }
+
+  pub async fn shutdown(self) -> Result<C, JoinError> {
+    self.tx.send(InternalEvent::Shutdown).await;
+    self.join_handle.await
+  }
+
+  pub fn dispatcher(&self) -> Dispatcher<E> {
+    Dispatcher { tx: self.tx.clone() }
+  }
 }
 
 struct StateMachineInternal<C, E> {
@@ -303,51 +367,6 @@ fn find_index_of_difference<T: PartialEq>(a: &Vec<T>, b: &Vec<T>) -> usize {
   return n;
 }
 
-impl<C: Send + 'static, E: Debug + Send + 'static> StateMachine<C, E> {
-  pub fn start<D: StateMachineDescriptor<Context = C, Event = E>>() -> Self {
-    let (tx, rx) = tokio::sync::mpsc::channel(32);
-    let tx_inner = tx.clone();
-    let join_handle = tokio::spawn(async move {
-      let context = Context {
-        user: D::new_context(),
-        tx: tx_inner,
-      };
-      let dispatcher = context.dispatcher();
-      let states = D::states();
-      let initial_state_id = states.initial_state.unwrap();
-      let mut internal = StateMachineInternal {
-        debug_name: D::debug_name(),
-        context,
-        dispatcher,
-        states,
-        current_states: vec![],
-        rx,
-        front_of_queue_events: VecDeque::new(),
-        deferred_events: VecDeque::new(),
-      };
-      internal.enter_initial_states(initial_state_id);
-      internal.handle_events().await;
-
-      // Give the context back to the caller on shutdown so they can inspect the results.  Mostly
-      // this is useful for testing though.
-      internal.context.user
-    });
-    Self {
-      tx,
-      join_handle,
-    }
-  }
-
-  pub async fn shutdown(self) -> Result<C, JoinError> {
-    self.tx.send(InternalEvent::Shutdown).await;
-    self.join_handle.await
-  }
-
-  pub fn dispatcher(&self) -> Dispatcher<E> {
-    Dispatcher { tx: self.tx.clone() }
-  }
-}
-
 const HANDLE_BY_SUBSTATE: isize = -1;
 
 enum InternalEvent<E> {
@@ -363,16 +382,6 @@ enum InternalEvent<E> {
   /// Shutdown the state machine; no longer handle messages after this one is received (which is
   /// still governed by FIFO ordering).
   Shutdown,
-}
-
-pub struct Dispatcher<E> {
-  tx: Sender<InternalEvent<E>>,
-}
-
-impl<E> Dispatcher<E> {
-  pub async fn dispatch(&self, event: E) {
-    self.tx.send(InternalEvent::UserEvent(event, HANDLE_BY_SUBSTATE)).await;
-  }
 }
 
 pub struct StateTreeBuilder<C, E> {
@@ -506,6 +515,15 @@ struct StateInstance<C, E> {
   instance: Box<dyn State<Context = C, Event = E> + Send>,
 }
 
+struct StateNode<C, E> {
+  type_id: TypeId,
+  debug_name: &'static str,
+  parent_type_id: Option<TypeId>,
+  transitions_to: HashSet<TypeId>,
+  is_parent: bool,
+  factory: fn() -> Box<dyn State<Context = C, Event = E> + Send>,
+}
+
 pub struct StateGraphPrinter;
 impl StateGraphPrinter {
   /// # Example output:
@@ -527,10 +545,10 @@ impl StateGraphPrinter {
   }
 
   fn print_internal<C, E>(
-      states: &StateGraph<C, E>,
-      parent_name: &'static str,
-      parent_type_id: Option<TypeId>,
-      indent: usize) {
+    states: &StateGraph<C, E>,
+    parent_name: &'static str,
+    parent_type_id: Option<TypeId>,
+    indent: usize) {
     let children = states.nodes.values().filter(|s| {
       s.parent_type_id == parent_type_id
     });
@@ -580,30 +598,6 @@ impl StateGraphPrinter {
       }
     }
   }
-}
-
-struct StateNode<C, E> {
-  type_id: TypeId,
-  debug_name: &'static str,
-  parent_type_id: Option<TypeId>,
-  transitions_to: HashSet<TypeId>,
-  is_parent: bool,
-  factory: fn() -> Box<dyn State<Context = C, Event = E> + Send>,
-}
-
-pub trait StateMachineDescriptor {
-  type Context: Default;
-  type Event: Debug;
-
-  fn debug_name() -> &'static str;
-  fn states() -> StateGraph<Self::Context, Self::Event>;
-  fn new_context() -> Self::Context { Self::Context::default() }
-}
-
-enum StateMachineEvent<E, S> {
-  TransitionTo(S),
-  UserEvent(E),
-  Shutdown,
 }
 
 #[cfg(test)]
