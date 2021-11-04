@@ -9,6 +9,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::task::{JoinError, JoinHandle, spawn_blocking};
+use tokio::time::{Duration, Instant};
 
 pub trait StateMachineDescriptor {
   type Context: Default;
@@ -45,9 +46,33 @@ pub struct Dispatcher<E> {
   tx: Sender<InternalEvent<E>>,
 }
 
-impl<E> Dispatcher<E> {
+impl<E: Send + 'static> Dispatcher<E> {
   pub async fn dispatch(&self, event: E) {
     self.tx.send(InternalEvent::UserEvent(event, HANDLE_BY_SUBSTATE)).await;
+  }
+
+  pub fn dispatch_sync(&self, event: E) {
+    self.dispatch_delay(event, Duration::from_millis(0));
+  }
+
+  pub fn dispatch_delay_ms(&self, event: E, delay_ms: u64) {
+    self.dispatch_delay(event, Duration::from_millis(delay_ms));
+  }
+
+  pub fn dispatch_delay(&self, event: E, delay: Duration) {
+    let clone_self = Dispatcher { tx: self.tx.clone() };
+    tokio::spawn(async move {
+      tokio::time::sleep(delay).await;
+      clone_self.dispatch(event).await;
+    });
+  }
+
+  pub fn dispatch_at_time(&self, event: E, deadline: Instant) {
+    let clone_self = Dispatcher { tx: self.tx.clone() };
+    tokio::spawn(async move {
+      tokio::time::sleep_until(deadline).await;
+      clone_self.dispatch(event).await;
+    });
   }
 }
 
@@ -627,10 +652,7 @@ mod tests {
       match event {
         TestEvent::DoWork(_, _) => {
           context.user.event("NotInitialized: DoWork");
-          let dispatcher = context.dispatcher();
-          tokio::spawn(async move {
-            dispatcher.dispatch(TestEvent::DoInitialize).await;
-          });
+          context.dispatcher().dispatch_sync(TestEvent::DoInitialize);
           Err(NotHandled::DeferEvent(event))
         }
         _ => Err(NotHandled::UnknownEvent(event)),
@@ -671,11 +693,7 @@ mod tests {
 
     fn on_enter(&mut self, context: &mut Context<Self::Context, Self::Event>) {
       context.user.event("Initializing: enter");
-      let dispatcher = context.dispatcher();
-      tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(INITIALIZE_DELAY_MS)).await;
-        dispatcher.dispatch(TestEvent::OnInitialized).await;
-      });
+      context.dispatcher().dispatch_delay_ms(TestEvent::OnInitialized, INITIALIZE_DELAY_MS);
     }
 
     fn on_exit(&mut self, context: &mut Context<Self::Context, Self::Event>) {
@@ -741,13 +759,11 @@ mod tests {
         TestEvent::DoWork(token, will_be_success) => {
           context.user.event(format!("Ready: DoWork {} {}", token, will_be_success).as_str());
           let dispatcher = context.dispatcher();
-          tokio::spawn(async move {
-            if will_be_success {
-              dispatcher.dispatch(TestEvent::OnWorkSuccess).await;
-            } else {
-              dispatcher.dispatch(TestEvent::OnWorkFailed(anyhow!("Bummer"))).await;
-            }
-          });
+          if will_be_success {
+            dispatcher.dispatch_sync(TestEvent::OnWorkSuccess);
+          } else {
+            dispatcher.dispatch_sync(TestEvent::OnWorkFailed(anyhow!("Bummer")));
+          }
           Ok(Transition::MoveTo(TypeId::of::<Busy>()))
         }
         _ => Err(NotHandled::UnknownEvent(event)),
