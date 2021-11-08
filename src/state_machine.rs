@@ -455,14 +455,14 @@ impl<C, E> StateTreeBuilder<C, E> {
     return state_id;
   }
 
-  fn transitions_to<S: State<Context = C, Event = E>>(mut self) -> Self
+  pub fn transitions_to<S: State<Context = C, Event = E>>(mut self) -> Self
       where S: 'static {
     let defining_state = self.last_type_id.unwrap();
     self.tree.add_transition(defining_state, TypeId::of::<S>());
     self
   }
 
-  fn initial(mut self) -> Self {
+  pub fn initial(mut self) -> Self {
     self.tree.set_initial(self.last_type_id.unwrap());
     self
   }
