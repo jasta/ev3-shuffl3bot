@@ -6,7 +6,7 @@ pub trait StateMachineDescriptor {
   type Context: Default;
   type Event: Debug;
 
-  fn debug_name() -> &'static str;
-  fn states() -> StateGraph<Self::Context, Self::Event>;
-  fn new_context() -> Self::Context { Self::Context::default() }
+  fn debug_name(&self) -> &'static str;
+  fn states(&self) -> StateGraph<Self::Context, Self::Event>;
+  fn into_context(self) -> Self::Context where Self: Sized { Self::Context::default() }
 }

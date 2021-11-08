@@ -206,11 +206,11 @@ mod tests {
         type Context = TestContext;
         type Event = TestEvent;
 
-        fn debug_name() -> &'static str {
+        fn debug_name(&self) -> &'static str {
             return "TestStateMachine";
         }
 
-        fn states() -> StateGraph<Self::Context, Self::Event> {
+        fn states(&self) -> StateGraph<Self::Context, Self::Event> {
             StateGraph::builder()
                 .add_parent::<NotInitialized>(|s| s
                     .add::<WaitingToInit>().initial().transitions_to::<Initializing>()
@@ -228,19 +228,19 @@ mod tests {
 
     #[test]
     fn test_state_builder_smoke() {
-        let graph = TestStateMachine::states();
+        let graph = TestStateMachine {}.states();
         StateGraphPrinter::pretty_print(&graph);
     }
 
     #[tokio::test]
     async fn test_shutdown_causes_task_cleanup() {
-        let machine = StateMachine::<TestContext, TestEvent>::start::<TestStateMachine>();
+        let machine = StateMachine::<TestContext, TestEvent>::start(TestStateMachine {});
         machine.shutdown().await;
     }
 
     #[tokio::test(start_paused = true)]
     async fn test_deferred_and_delayed_messages() {
-        let machine = StateMachine::<TestContext, TestEvent>::start::<TestStateMachine>();
+        let machine = StateMachine::<TestContext, TestEvent>::start(TestStateMachine {});
         let dispatcher = machine.dispatcher();
         dispatcher.dispatch(TestEvent::DoWork(123, true)).await;
         dispatcher.dispatch(TestEvent::DoWork(456, false)).await;
@@ -285,7 +285,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn test_invalid_transitions() {
-        let machine = StateMachine::<LiteralContext, LiteralEvent>::start::<LiteralStateMachine>();
+        let machine = StateMachine::<LiteralContext, LiteralEvent>::start(LiteralStateMachine {});
         let dispatcher = machine.dispatcher();
         dispatcher.dispatch(LiteralEvent::GoToZ).await;
 
@@ -356,11 +356,11 @@ mod tests {
         type Context = LiteralContext;
         type Event = LiteralEvent;
 
-        fn debug_name() -> &'static str {
+        fn debug_name(&self) -> &'static str {
             return "LiteralStateMachine";
         }
 
-        fn states() -> StateGraph<Self::Context, Self::Event> {
+        fn states(&self) -> StateGraph<Self::Context, Self::Event> {
             StateGraph::builder()
                 .add::<StateX>().initial().transitions_to::<StateY>()
                 .add::<StateY>().transitions_to::<StateZ>()

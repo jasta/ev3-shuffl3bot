@@ -1,59 +1,47 @@
 use futures_signals::signal::Mutable;
 use tokio::sync;
+use tokio::sync::{oneshot, watch};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, MissedTickBehavior};
 use tokio::time::interval;
+use lazy_static::lazy_static;
 
-use crate::suction_pump_hal::{HalResult, SuctionPumpHal};
+use crate::suction_pump_hal::{HalResult, SuctionPumpHal, SuctionPumpPressureSensor};
+
+static SAMPLER: Option<PressureSensorSampler> = None;
 
 pub struct PressureSensorSampler {
   handle: JoinHandle<()>,
-  pub reading: Mutable<HalResult<i32>>,
-  shutdown: UnboundedSender<()>,
+  reader: Receiver<HalResult<i32>>,
 }
 
 impl PressureSensorSampler {
-  pub async fn start(hal: Box<dyn SuctionPumpHal + Send>) -> HalResult<Self> {
-    let current_pressure = hal.get_pressure_pa()?;
-    let reading = Mutable::new(Ok(current_pressure));
-    let reading_for_async = reading.clone();
-    let (shutdown_tx, shutdown_rx) = sync::mpsc::unbounded_channel::<()>();
+  pub async fn start(sensor: Box<dyn SuctionPumpPressureSensor + Send>) -> HalResult<Self> {
+    let current_pressure = sensor.get_pressure_pa()?;
+    let (sender, reader) = watch::channel::<HalResult<i32>>(Ok(current_pressure));
     let handle = tokio::spawn(async move {
-      run_pressure_sensor_loop(hal, reading_for_async, shutdown_rx).await;
-      println!("Shutting down...");
+      let freq = sensor.pressure_sensor_frequency_hz().unwrap();
+      let mut interval = interval(Duration::from_millis(freq.into()));
+      interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+      loop {
+        interval.tick().await;
+        sender.send(sensor.get_pressure_pa());
+      }
     });
-    Ok(Self { handle, reading, shutdown: shutdown_tx })
+    Ok(Self { handle, reader })
   }
-}
 
-async fn run_pressure_sensor_loop(
-    hal: Box<dyn SuctionPumpHal + Send>,
-    reading: Mutable<HalResult<i32>>,
-    mut shutdown: UnboundedReceiver<()>) {
-  let freq = hal.pressure_sensor_frequency_hz().unwrap();
-  let mut interval = interval(Duration::from_millis(freq.into()));
-  interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-  loop {
-    tokio::select! {
-      _ = interval.tick() => {
-        reading.set(hal.get_pressure_pa());
-      },
-      _ = shutdown.recv() => {
-        return;
-      },
-    }
+  pub fn subscribe(&self) -> Receiver<HalResult<i32>> {
+    self.reader.clone()
   }
 }
 
 impl Drop for PressureSensorSampler {
   fn drop(&mut self) {
-    self.shutdown.send(()).unwrap();
+    self.handle.abort();
   }
-}
-
-enum Message {
-  Terminate,
 }
 
 #[cfg(test)]
@@ -63,7 +51,7 @@ mod tests {
   use futures::StreamExt;
   use futures_signals::signal::SignalExt;
 
-  use crate::suction_pump_machine::PumpDirection;
+  use crate::suction_pump_hal::PumpDirection;
 
   use super::*;
 
@@ -81,21 +69,13 @@ mod tests {
     }
   }
 
-  impl SuctionPumpHal for TestSuctionPumpHal {
+  impl SuctionPumpPressureSensor for TestSuctionPumpHal {
     fn pressure_sensor_frequency_hz(&self) -> HalResult<u32> {
       Ok(TEST_PRESSURE_SENSOR_FREQUENCY_HZ)
     }
 
     fn get_pressure_pa(&self) -> HalResult<i32> {
       self.values.borrow_mut().next().unwrap()
-    }
-
-    fn start_pump_motor(&mut self, direction: PumpDirection) -> HalResult<()> {
-      panic!();
-    }
-
-    fn stop_pump_motor(&mut self) -> HalResult<()> {
-      panic!();
     }
   }
 
@@ -106,10 +86,10 @@ mod tests {
       TestSuctionPumpHal::with_test_pressure_values(test_values.clone().into_iter())))
         .await.unwrap();
 
-    let mut stream = sampler.reading.signal_cloned().to_stream();
-    for expected in &test_values {
-      let actual = stream.next().await.unwrap();
-      assert_eq!(*expected, actual);
+    let mut receiver = sampler.subscribe();
+    for &expected in &test_values {
+      receiver.changed().await;
+      assert_eq!(expected, receiver.borrow());
     }
   }
 }

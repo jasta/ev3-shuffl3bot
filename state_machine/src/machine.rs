@@ -64,19 +64,20 @@ pub struct StateMachine<C, E> {
 }
 
 impl<C: Send + 'static, E: Debug + Send + 'static> StateMachine<C, E> {
-  pub fn start<D: StateMachineDescriptor<Context = C, Event = E>>() -> Self {
+  pub fn start<D: StateMachineDescriptor<Context = C, Event = E> + Send + 'static>(descriptor: D) -> Self {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     let tx_inner = tx.clone();
     let join_handle = tokio::spawn(async move {
+      let debug_name = descriptor.debug_name();
+      let states = descriptor.states();
       let context = Context {
-        user: D::new_context(),
+        user: descriptor.into_context(),
         tx: tx_inner,
       };
       let dispatcher = context.dispatcher();
-      let states = D::states();
       let initial_state_id = states.initial_state.unwrap();
       let mut internal = StateMachineInternal {
-        debug_name: D::debug_name(),
+        debug_name,
         context,
         dispatcher,
         states,
