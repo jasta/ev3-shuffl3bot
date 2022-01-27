@@ -9,56 +9,28 @@ use ev3dev_lang_rust::motors::MotorPort;
 use ev3dev_lang_rust::sensors::{Sensor, SensorPort};
 use ev3dev_lang_rust_derive::{Device, Sensor};
 
-use crate::suction_pump_hal::{HalError, HalResult, SuctionPumpHal};
-use crate::suction_pump_machine::PumpDirection;
+use crate::ev3::ms_pressure_sensor::MSPressureSensor;
+use crate::suction_pump_hal::{HalError, HalResult, SuctionPumpHal, SuctionPumpMotor, SuctionPumpPressureSensor};
+use crate::suction_pump_hal::PumpDirection;
 
-#[derive(Debug, Clone, Device, Sensor)]
-struct MSPressureSensor {
-  driver: Driver,
-}
-
-impl MSPressureSensor {
-  fn new(driver: Driver) -> Self {
-    Self { driver }
-  }
-
-  findable! {
-    "lego-sensor",
-    [ "ms-pps58-mx" ],
-    SensorPort,
-    "MSPressureSensor",
-    "in"
-  }
-
-  pub fn current_pressure_pa(&self) -> Ev3Result<i32> {
-    self.ensure_mode("RAW")?;
-    self.get_value0()
-  }
-
-  fn ensure_mode(&self, requested_mode: &str) -> Ev3Result<()> {
-    let current_mode = self.get_mode()?;
-    if current_mode != requested_mode {
-      self.set_mode(requested_mode)?;
-    }
-    Ok(())
-  }
-}
-
-struct Ev3SuctionPumpHAL {
-  pump_motor: LargeMotor,
-  pressure_sensor: MSPressureSensor,
-}
+struct Ev3SuctionPumpHAL;
 
 impl Ev3SuctionPumpHAL {
-  fn init(pump_motor_port: MotorPort, pressure_sensor_port: SensorPort) -> Ev3Result<Self> {
+  fn init(pump_motor_port: MotorPort, pressure_sensor_port: SensorPort) -> Ev3Result<SuctionPumpHal> {
     let pump_motor = LargeMotor::get(pump_motor_port)?;
     let pressure_sensor = MSPressureSensor::get(pressure_sensor_port)?;
 
-    Ok(Self { pump_motor, pressure_sensor })
+    Ok(SuctionPumpHal {
+      motor: Box::new(Ev3SuctionPumpMotor { pump_motor }),
+      pressure_sensor: Box::new(Ev3SuctionPumpPressureSensor { pressure_sensor }),
+    })
   }
 }
 
-impl SuctionPumpHal for Ev3SuctionPumpHAL {
+struct Ev3SuctionPumpPressureSensor {
+  pressure_sensor: MSPressureSensor,
+}
+impl SuctionPumpPressureSensor for Ev3SuctionPumpPressureSensor {
   fn pressure_sensor_frequency_hz(&self) -> HalResult<u32> {
     Ok(10)
   }
@@ -67,7 +39,12 @@ impl SuctionPumpHal for Ev3SuctionPumpHAL {
     let pressure = self.pressure_sensor.current_pressure_pa()?;
     Ok(pressure)
   }
+}
 
+struct Ev3SuctionPumpMotor {
+  pump_motor: LargeMotor,
+};
+impl SuctionPumpMotor for Ev3SuctionPumpMotor {
   fn start_pump_motor(&mut self, direction: PumpDirection) -> HalResult<()> {
     let direction_mod = match direction {
       PumpDirection::Vacuum => 1,
