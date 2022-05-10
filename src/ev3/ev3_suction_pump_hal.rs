@@ -2,7 +2,6 @@ use core::result::Result::Ok;
 
 use ev3dev_lang_rust::{Attribute, Device, Driver};
 use ev3dev_lang_rust::{Ev3Error, Ev3Result};
-#[macro_use]
 use ev3dev_lang_rust::findable;
 use ev3dev_lang_rust::motors::LargeMotor;
 use ev3dev_lang_rust::motors::MotorPort;
@@ -43,7 +42,8 @@ impl SuctionPumpPressureSensor for Ev3SuctionPumpPressureSensor {
 
 struct Ev3SuctionPumpMotor {
   pump_motor: LargeMotor,
-};
+}
+
 impl SuctionPumpMotor for Ev3SuctionPumpMotor {
   fn start_pump_motor(&mut self, direction: PumpDirection) -> HalResult<()> {
     let direction_mod = match direction {

@@ -1,12 +1,9 @@
-use futures_signals::signal::Mutable;
-use tokio::sync;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::watch;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, MissedTickBehavior};
 use tokio::time::interval;
-use lazy_static::lazy_static;
 
 use crate::suction_pump_hal::{HalResult, SuctionPumpHal, SuctionPumpPressureSensor};
 

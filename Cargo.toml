@@ -2,18 +2,17 @@
 name = "ev3-shuffl3bot"
 version = "0.1.0"
 authors = ["Josh Guilfoyle <jasta@devtcg.org>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-clap = "3.0.0-beta.4"
-rand = "0.8.0"
-ev3dev-lang-rust = "0.10.2"
+clap = { version = "3.1.15", features = ["derive"] }
+rand = "0.8.5"
+ev3dev-lang-rust = "0.12.0"
 ev3dev-lang-rust-derive = "0.10.0"
-cursive = { version = "0.16.3", default-features = false, features = ["termion-backend" ] }
-anyhow = "1.0.44"
-futures = "0.3.17"
-futures-signals = "0.3.22"
-tokio = { version = "1.12.0", features = [ "time", "rt", "macros", "sync", "test-util" ] }
-thiserror = "1.0.30"
+anyhow = "1.0.57"
+futures = "0.3.21"
+futures-signals = "0.3.25"
+tokio = { version = "1.18.2", features = [ "time", "rt", "macros", "sync", "test-util" ] }
+thiserror = "1.0.31"
 derive-new = "0.5.9"
 state_machine = { path = "state_machine" }

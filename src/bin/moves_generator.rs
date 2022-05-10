@@ -1,8 +1,8 @@
-use clap::Clap;
+use clap::Parser;
 
 use ev3_shuffl3bot::shuffle_solver::{CardMove, ShuffleSolution, ShuffleSolver, ShuffleSolverOptions};
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 #[clap(name = "moves_generator")]
 struct Opts {
   #[clap(short = 'n', long, default_value = "40")]

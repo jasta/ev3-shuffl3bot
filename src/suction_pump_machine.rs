@@ -11,18 +11,9 @@ use tokio::sync::{Mutex, oneshot};
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
 
-use finny::{finny_fsm, FsmEventQueueVec};
-use finny::decl::{BuiltFsm, FsmBuilder};
-use finny::FsmBackend;
-use finny::FsmFactory;
-use finny::FsmFrontend;
-use state_machine::descriptor::StateMachineDescriptor;
-use state_machine::graph::StateGraph;
-use state_machine::machine::{Context, Dispatcher, StateMachine};
-use state_machine::state::{HandleResult, NotHandled, State, Transition};
+use state_machine::{Context, Dispatcher, HandleResult, NotHandled, State, StateGraph, StateMachine, StateMachineDescriptor, Transition};
 
 use crate::pressure_sampler::PressureSensorSampler;
-use crate::state_machine::{State, StateGraph, StateMachine, StateMachineDescriptor};
 use crate::suction_pump_hal::{HalError, HalResult, PumpDirection, SuctionPumpHal, SuctionPumpMotor, SuctionPumpPressureSensor};
 
 const NORMAL_ATMOSPHERIC_PRESSURE: Range<i32> = 104000 .. 110000;
@@ -37,7 +28,7 @@ impl SuctionPumpMachine {
   pub fn new(pump_motor: Box<dyn SuctionPumpMotor + Send>, pressure_sampler: PressureSensorSampler) -> Self {
     let (airtight_seal_sender, _) = tokio::sync::watch::channel(AirtightSealState(None));
     let pressure_sampler_arc = Arc::new(Mutex::new(pressure_sampler));
-    let pressure_sm = StateMachine::<(), SuctionPumpEvents>::start(
+    let pressure_sm = StateMachine::<PressureSmContext, SuctionPumpEvents>::start(
         PressureSm {
           context: PressureSmContext {
             pressure_sampler: pressure_sampler_arc.clone(),
@@ -58,7 +49,7 @@ impl SuctionPumpMachine {
   }
 
   pub async fn subscribe_airtight_seal(&self) -> Receiver<AirtightSealState> {
-    self.airtight_seal_sender.lock().await.subscribe()
+    self.airtight_seal_sender.subscribe()
   }
 
   pub async fn pump_and_hold_at(&self, request: PumpAndHoldAtData) {
@@ -71,13 +62,20 @@ impl SuctionPumpMachine {
 pub struct AirtightSealState(Option<bool>);
 
 struct MotorSmContext {
-  motor: Box<dyn SuctionPumpMotor>,
+  motor: Box<dyn SuctionPumpMotor + Send>,
   pressure_sampler: Arc<Mutex<PressureSensorSampler>>,
 }
 
 struct MotorSm {
   context: MotorSmContext,
 }
+
+impl Default for MotorSmContext {
+  fn default() -> Self {
+    todo!("sigh, this stuff needs to be rewritten...")
+  }
+}
+
 impl StateMachineDescriptor for MotorSm {
   type Context = MotorSmContext;
   type Event = SuctionPumpEvents;
@@ -121,23 +119,34 @@ impl State for MotorStopped {
   }
 }
 
-#[derive(Default)]
 struct MotorSensingPressure {
   pressure_relay_handle: JoinHandle<()>,
 }
+
+impl Default for MotorSensingPressure {
+  fn default() -> Self {
+    todo!("sigh, not workable")
+  }
+}
+
 impl State for MotorSensingPressure {
   type Context = MotorSmContext;
   type Event = SuctionPumpEvents;
 
   fn on_enter(&mut self, context: &mut Context<Self::Context, Self::Event>) {
     let dispatcher = context.dispatcher();
+    let pressure_sampler = context.user.pressure_sampler.clone();
     self.pressure_relay_handle = tokio::spawn(async move {
-      let sampler = context.user.pressure_sampler.lock().await;
+      let sampler = pressure_sampler.lock().await;
       let mut subscription = sampler.subscribe();
       drop(sampler);
       while subscription.changed().await.is_ok() {
-        let result = subscription.borrow();
-        match result {
+        let result = subscription.borrow().clone();
+        let mapped_result = result.and_then(|reading| {
+          u32::try_from(reading)
+              .map_err(|_| HalError::InternalError(format!("bad pressure reading: {reading}")))
+        });
+        match mapped_result {
           Ok(pressure) => dispatcher.dispatch(SuctionPumpEvents::OnPressureChange(pressure)).await,
           Err(err) => dispatcher.dispatch(SuctionPumpEvents::OnSensorError(err)).await,
         }
@@ -163,7 +172,7 @@ impl State for MotorPumping {
   fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
     match event {
       SuctionPumpEvents::OnPressureChange(pressure) => {
-        if (check_pressure(pressure, ))
+        todo!("Not finished");
         Ok(Transition::None)
       },
       _ => Err(NotHandled::UnknownEvent(event)),
@@ -174,6 +183,12 @@ impl State for MotorPumping {
 #[derive(Default)]
 struct MotorStandby;
 impl State for MotorStandby {
+  type Context = MotorSmContext;
+  type Event = SuctionPumpEvents;
+
+  fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
+    todo!()
+  }
 }
 
 struct PressureSmContext {
@@ -182,6 +197,12 @@ struct PressureSmContext {
 
 struct PressureSm {
   context: PressureSmContext,
+}
+
+impl Default for PressureSmContext {
+  fn default() -> Self {
+    todo!("sigh")
+  }
 }
 
 impl StateMachineDescriptor for PressureSm {
@@ -214,31 +235,67 @@ impl StateMachineDescriptor for PressureSm {
 #[derive(Default)]
 struct PressureNoReading;
 impl State for PressureNoReading {
+  type Context = PressureSmContext;
+  type Event = SuctionPumpEvents;
+
+  fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
+    todo!()
+  }
 }
 
 #[derive(Default)]
 struct PressureIdle;
 impl State for PressureIdle {
+  type Context = PressureSmContext;
+  type Event = SuctionPumpEvents;
+
+  fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
+    todo!()
+  }
 }
 
 #[derive(Default)]
 struct PressureWaitingForFirstReading;
 impl State for PressureWaitingForFirstReading {
+  type Context = PressureSmContext;
+  type Event = SuctionPumpEvents;
+
+  fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
+    todo!()
+  }
 }
 
 #[derive(Default)]
 struct PressureHasReading;
 impl State for PressureHasReading {
+  type Context = PressureSmContext;
+  type Event = SuctionPumpEvents;
+
+  fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
+    todo!()
+  }
 }
 
 #[derive(Default)]
 struct PressureClosed;
 impl State for PressureClosed {
+  type Context = PressureSmContext;
+  type Event = SuctionPumpEvents;
+
+  fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
+    todo!()
+  }
 }
 
 #[derive(Default)]
 struct PressureOpen;
 impl State for PressureOpen {
+  type Context = PressureSmContext;
+  type Event = SuctionPumpEvents;
+
+  fn handle(&mut self, context: &mut Context<Self::Context, Self::Event>, event: Self::Event) -> HandleResult<Self::Event> {
+    todo!()
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -256,9 +313,9 @@ pub struct PumpAndHoldAtData {
   pressure_range_pa: Range<i32>,
 }
 
-fn check_pressure(current_pressure: i32, target: PumpAndHoldAtData, which_check: PressureCheck) -> bool {
-  let target_min = target.pressure_range_pa.min().unwrap();
-  let target_max = target.pressure_range_pa.max().unwrap();
+fn check_pressure(value: i32, target: PumpAndHoldAtData, which_check: PressureCheck) -> bool {
+  let target_min = target.pressure_range_pa.start;
+  let target_max = target.pressure_range_pa.end;
   match which_check {
     PressureCheck::PumpedTooLittle => {
       match target.direction {

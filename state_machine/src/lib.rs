@@ -5,6 +5,11 @@ pub mod graph;
 pub mod machine;
 pub mod state;
 
+pub use state::{State, Transition, HandleResult, NotHandled};
+pub use machine::{Context, Dispatcher, StateMachine};
+pub use graph::StateGraph;
+pub use descriptor::StateMachineDescriptor;
+
 #[cfg(test)]
 mod tests {
     use std::any::TypeId;

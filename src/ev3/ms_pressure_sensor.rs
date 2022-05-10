@@ -1,5 +1,6 @@
-use ev3dev_lang_rust::{Driver, Ev3Result};
-use ev3dev_lang_rust_derive::{device_macro_derive as Device, sensor_macro_derive as Sensor};
+use ev3dev_lang_rust::{Driver, Device, Attribute, Ev3Result, Ev3Error, findable};
+use ev3dev_lang_rust::sensors::{Sensor, SensorPort};
+use ev3dev_lang_rust_derive::{Device, Sensor};
 
 #[derive(Debug, Clone, Device, Sensor)]
 pub(crate) struct MSPressureSensor {

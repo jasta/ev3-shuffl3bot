@@ -30,7 +30,7 @@ pub struct Dispatcher<E> {
 
 impl<E: Send + 'static> Dispatcher<E> {
   pub async fn dispatch(&self, event: E) {
-    self.tx.send(InternalEvent::UserEvent(event, HANDLE_BY_SUBSTATE)).await;
+    let _ = self.tx.send(InternalEvent::UserEvent(event, HANDLE_BY_SUBSTATE)).await;
   }
 
   pub fn dispatch_sync(&self, event: E) {
@@ -100,7 +100,7 @@ impl<C: Send + 'static, E: Debug + Send + 'static> StateMachine<C, E> {
   }
 
   pub async fn shutdown(self) -> Result<C, JoinError> {
-    self.tx.send(InternalEvent::Shutdown).await;
+    let _ = self.tx.send(InternalEvent::Shutdown).await;
     self.join_handle.await
   }
 
