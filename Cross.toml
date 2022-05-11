@@ -1,0 +1,3 @@
+[target.armv5te-unknown-linux-gnueabi]
+image = "jasta/ev3-remote-control:latest"
+

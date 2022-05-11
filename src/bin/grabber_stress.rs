@@ -11,13 +11,14 @@
 
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::{Mutex, MutexGuard};
-use std::{io, thread};
+use std::{env, io, thread};
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ai_behavior::{Action, Behavior, Fail, Failure, Running, Select, Sequence, State, Status, Success, Wait, WhenAll, WhenAny, While};
+use ai_behavior::{Action, Behavior, Fail, Failure, Running, Sequence, State, Status, Success, Wait, WhenAny, While};
 use anyhow::anyhow;
+use clap::lazy_static;
 use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
 use ev3dev_lang_rust::sensors::SensorPort;
 use input::{Event, UpdateArgs};
@@ -28,10 +29,17 @@ use ev3_shuffl3bot::ev3;
 const TICK_INTERVAL: Duration = Duration::from_millis(20);
 
 fn main() -> anyhow::Result<()> {
+    let args: Vec<_> = env::args().collect();
+    let num_runs_str = args.get(1).cloned().unwrap_or_else(|| "50".to_owned());
+    let num_runs: u32 = num_runs_str.parse()?;
     let mut hal = create_hal()?;
     hal.calibrate()?;
     let bt = BehaviourTreeFactory.create_bt();
-    run_machine(State::new(bt), hal)?
+
+    for i in 0..num_runs {
+        println!("Starting run #{i}...");
+        hal = run_machine(bt.clone(), hal)?;
+    }
     println!("Successful stress test!");
     Ok(())
 }
@@ -48,16 +56,17 @@ fn create_hal() -> anyhow::Result<Box<dyn GrabberHal>> {
     }
 }
 
-fn run_machine(mut state: State<GrabberAction, ()>, hal: Box<dyn GrabberHal>) -> anyhow::Result<()> {
-    let mut my_state = GrabberState::new(hal);
+fn run_machine(behaviour: Behavior<GrabberAction>, hal: Box<dyn GrabberHal>) -> anyhow::Result<Box<dyn GrabberHal>> {
+    let mut machine: State<GrabberAction, ()> = State::new(behaviour);
+    let mut state = GrabberState::new(hal);
 
     let mut dt = 0.0;
     let mut ticks = 0;
     let result = loop {
         let start = Instant::now();
         let e: Event = UpdateArgs { dt }.into();
-        let (status, _) = state.event(&e, &mut |args| {
-            (args.action.action.handle(&mut my_state), args.dt)
+        let (status, _) = machine.event(&e, &mut |args| {
+            (args.action.action.handle(&mut state), args.dt)
         });
 
         // TODO: This of course should be a proper RT interval!
@@ -80,7 +89,10 @@ fn run_machine(mut state: State<GrabberAction, ()>, hal: Box<dyn GrabberHal>) ->
         }
     };
     println!();
-    result
+
+    // Oh hell, the ownership of the HAL isn't great but it's not worth fixing right now for this
+    // tool.
+    result.map(|_| state.into_hal())
 }
 
 struct BehaviourTreeFactory;
@@ -178,15 +190,23 @@ struct GrabberHalEv3 {
 }
 
 impl GrabberHalEv3 {
-    const ARM_RAISED_POS: i32 = 10;
-    const ARM_RELEASE_POS: i32 = 40;
-    const ARM_LOWER_DUTY_CYCLE: i32 = -30;
+    const ARM_CALIBRATE_DUTY_CYCLE: i32 = 70;
+    const ARM_RAISED_POS: i32 = -10;
+    const ARM_RAISE_SPEED: i32 = 600;
+    const ARM_LOWER_TO_DROP_SPEED: i32 = -600;
+    const ARM_RELEASE_POS: i32 = -100;
+    const ARM_LOWER_DUTY_CYCLE: i32 = -50;
     const PUMP_CREATE_VACUUM_CYCLE: i32 = -100;
     const PUMP_RELEASE_VACUUM_CYCLE: i32 = 100;
 }
 
 impl GrabberHal for GrabberHalEv3 {
     fn calibrate(&mut self) -> anyhow::Result<()> {
+        self.arm_motor.set_duty_cycle_sp(GrabberHalEv3::ARM_CALIBRATE_DUTY_CYCLE)?;
+        self.arm_motor.run_direct()?;
+        if !self.arm_motor.wait_until(MediumMotor::STATE_STALLED, Some(Duration::from_secs(4))) {
+            return Err(anyhow!("Arm calibration failed!"));
+        }
         self.arm_motor.reset()?;
         self.pump_motor.reset()?;
         Ok(())
@@ -194,10 +214,12 @@ impl GrabberHal for GrabberHalEv3 {
 
     fn current_pressure_pa(&self) -> anyhow::Result<u32> {
         let reading = self.pressure_sensor.current_pressure_pa()?;
+        println!("current_pressure_pa: {reading}");
         Ok(u32::try_from(reading)?)
     }
 
     fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
+        println!("send_arm_command: {command:?}");
         match command {
             ArmCommand::LowerToGrab => {
                 self.arm_motor.set_duty_cycle_sp(GrabberHalEv3::ARM_LOWER_DUTY_CYCLE)?;
@@ -205,10 +227,12 @@ impl GrabberHal for GrabberHalEv3 {
             }
             ArmCommand::LowerToDrop => {
                 self.arm_motor.set_stop_action("coast")?;
+                self.arm_motor.set_speed_sp(GrabberHalEv3::ARM_LOWER_TO_DROP_SPEED)?;
                 self.arm_motor.run_to_abs_pos(Some(GrabberHalEv3::ARM_RELEASE_POS))?;
             }
             ArmCommand::Raise => {
                 self.arm_motor.set_stop_action("brake")?;
+                self.arm_motor.set_speed_sp(GrabberHalEv3::ARM_RAISE_SPEED)?;
                 self.arm_motor.run_to_abs_pos(Some(GrabberHalEv3::ARM_RAISED_POS))?;
             }
             ArmCommand::Hold => {
@@ -224,6 +248,7 @@ impl GrabberHal for GrabberHalEv3 {
     }
 
     fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
+        println!("send_pump_command: {command:?}");
         match command {
             PumpCommand::CreateVacuum => {
                 self.pump_motor.set_duty_cycle_sp(GrabberHalEv3::PUMP_CREATE_VACUUM_CYCLE)?;
@@ -277,7 +302,7 @@ impl BehaviourTreeFactory {
             }
         }));
 
-        let lift_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let lift_arm = Action(DynamicAction::new(|s: &mut GrabberState| {
             if s.set_arm_command(ArmCommand::Raise).is_err() {
                 return Failure;
             }
@@ -317,12 +342,13 @@ impl BehaviourTreeFactory {
                     Box::new(Sequence(
                         vec![
                             self.WithTimeout(Duration::from_secs(2), grab_card),
-                            self.WithTimeout(Duration::from_secs(2), lift_card),
+                            self.WithTimeout(Duration::from_secs(2), lift_arm.clone()),
                             Wait(Duration::from_secs(2).as_secs_f64()),
                             self.WithTimeout(Duration::from_secs(2), lower_card),
                         ])),
                     vec![running_while_in_contact]),
                 self.WithTimeout(Duration::from_secs(5), release_card),
+                self.WithTimeout(Duration::from_secs(2), lift_arm),
             ])
     }
 
@@ -345,6 +371,10 @@ impl GrabberState {
             arm_command: None,
             pump_command: None,
         }
+    }
+
+    pub fn into_hal(self) -> Box<dyn GrabberHal> {
+        self.hal
     }
 
     pub fn has_suction_state(&self, query: SuctionState) -> bool {

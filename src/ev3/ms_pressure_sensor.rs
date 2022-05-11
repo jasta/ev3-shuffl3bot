@@ -14,7 +14,7 @@ impl MSPressureSensor {
 
   findable! {
     "lego-sensor",
-    [ "ms-pps58-mx" ],
+    [ "ms-pps58-nx" ],
     SensorPort,
     "MSPressureSensor",
     "in"
