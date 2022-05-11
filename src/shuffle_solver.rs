@@ -32,7 +32,7 @@ impl ShuffleSolver {
     let mut solver = ShuffleSolver::new_internal(options);
     solver.solve_internal();
     solver.validate_solution();
-    return ShuffleSolution { required_moves: solver.required_moves };
+    ShuffleSolution { required_moves: solver.required_moves }
   }
 
   fn new_internal(options: ShuffleSolverOptions) -> ShuffleSolver {
@@ -91,7 +91,7 @@ impl ShuffleSolver {
       }
     }
 
-    return smallest_stack_index;
+    smallest_stack_index
   }
 
   fn find_stack_index_with_card(&self, card: usize) -> Option<usize> {
