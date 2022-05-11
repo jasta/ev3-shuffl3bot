@@ -49,7 +49,7 @@ impl ShuffleSolver {
 
     stacks[options.input_stack].append(&mut input_deck);
 
-    return ShuffleSolver { options, stacks, desired_draw_order, required_moves: Vec::new() };
+    ShuffleSolver { options, stacks, desired_draw_order, required_moves: Vec::new() }
   }
 
   fn solve_internal(&mut self) {

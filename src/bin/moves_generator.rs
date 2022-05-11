@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use ev3_shuffl3bot::shuffle_solver::{CardMove, ShuffleSolution, ShuffleSolver, ShuffleSolverOptions};
+use ev3_shuffl3bot::shuffle_solver::{ShuffleSolver, ShuffleSolverOptions};
 
 #[derive(Parser, Debug)]
 #[clap(name = "moves_generator")]
