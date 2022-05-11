@@ -13,15 +13,16 @@ use std::path::Path;
 use std::rc::Rc;
 use std::{env, io, thread};
 use std::io::Write;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ai_behavior::{Action, Behavior, Fail, Failure, Running, Sequence, State, Status, Success, Wait, WhenAny, While};
 use anyhow::anyhow;
-use clap::lazy_static;
+use conv::{ConvUtil, RoundToNearest};
+use ev3dev_lang_rust::Ev3Result;
 use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
 use ev3dev_lang_rust::sensors::SensorPort;
 use input::{Event, UpdateArgs};
+use pid::Pid;
 
 use ev3::ms_pressure_sensor::MSPressureSensor;
 use ev3_shuffl3bot::ev3;
@@ -46,11 +47,11 @@ fn main() -> anyhow::Result<()> {
 
 fn create_hal() -> anyhow::Result<Box<dyn GrabberHal>> {
     if Path::new("/sys/class/tacho-motor").exists() {
-        Ok(Box::new(GrabberHalEv3 {
-            pressure_sensor: MSPressureSensor::get(SensorPort::In4)?,
-            pump_motor: LargeMotor::get(MotorPort::OutA)?,
-            arm_motor: MediumMotor::get(MotorPort::OutD)?,
-        }))
+        Ok(Box::new(GrabberHalEv3::new(Ev3PortSpec {
+            pressure_sensor: SensorPort::In4,
+            pump_motor: MotorPort::OutA,
+            arm_motor: MotorPort::OutD
+        })?))
     } else {
         Ok(Box::new(GrabberHalMock::default()))
     }
@@ -103,6 +104,7 @@ trait GrabberHal {
     fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()>;
     fn is_arm_idle(&self) -> anyhow::Result<bool>;
     fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()>;
+    fn on_tick_while_holding(&mut self) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -122,8 +124,9 @@ enum ArmCommand {
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum PumpCommand {
-    CreateVacuum,
-    ReleaseVacuum,
+    StartVacuum,
+    CreateAndHoldVacuum,
+    ReverseVacuum,
     Stop,
 }
 
@@ -133,8 +136,9 @@ struct GrabberHalMock {
     pump_command: Option<PumpCommand>,
 }
 
-const MIN_PRESSURE_CONTACT: u32 = 100000;
-const MIN_PRESSURE_GRAB: u32 = 80000;
+const MIN_PRESSURE_CONTACT: u32 = 99000;
+const MIN_PRESSURE_GRAB: u32 = 93000;
+const TARGET_PRESSURE_GRAB: u32 = 80000;
 
 impl GrabberHal for GrabberHalMock {
     fn calibrate(&mut self) -> anyhow::Result<()> {
@@ -144,15 +148,14 @@ impl GrabberHal for GrabberHalMock {
 
     fn current_pressure_pa(&self) -> anyhow::Result<u32> {
         let answer = match self.pump_command.unwrap_or(PumpCommand::Stop) {
-            PumpCommand::CreateVacuum => {
+            PumpCommand::StartVacuum => {
                 match self.arm_command.unwrap_or(ArmCommand::Hold) {
                     ArmCommand::LowerToGrab => MIN_PRESSURE_CONTACT,
-                    ArmCommand::LowerToDrop => MIN_PRESSURE_GRAB,
-                    ArmCommand::Raise => MIN_PRESSURE_GRAB,
-                    ArmCommand::Hold => MIN_PRESSURE_GRAB,
+                    _ => u32::MAX,
                 }
             }
-            PumpCommand::ReleaseVacuum => u32::MAX,
+            PumpCommand::CreateAndHoldVacuum => MIN_PRESSURE_GRAB,
+            PumpCommand::ReverseVacuum => u32::MAX,
             PumpCommand::Stop => u32::MAX,
         };
         println!("current_pressure_pa: {answer}");
@@ -181,23 +184,48 @@ impl GrabberHal for GrabberHalMock {
         self.pump_command = Some(command);
         Ok(())
     }
+
+    fn on_tick_while_holding(&mut self) -> anyhow::Result<()> {
+        println!("on_tick_while_grabbed");
+        Ok(())
+    }
 }
 
-struct GrabberHalEv3 {
+pub struct GrabberHalEv3 {
     pressure_sensor: MSPressureSensor,
     arm_motor: MediumMotor,
     pump_motor: LargeMotor,
+    pump_pid: Pid<f64>,
+}
+
+pub struct Ev3PortSpec {
+    pub pressure_sensor: SensorPort,
+    pub pump_motor: MotorPort,
+    pub arm_motor: MotorPort,
 }
 
 impl GrabberHalEv3 {
-    const ARM_CALIBRATE_DUTY_CYCLE: i32 = 70;
+    const ARM_CALIBRATE_DUTY_CYCLE: i32 = 50;
     const ARM_RAISED_POS: i32 = -10;
     const ARM_RAISE_SPEED: i32 = 600;
     const ARM_LOWER_TO_DROP_SPEED: i32 = -600;
     const ARM_RELEASE_POS: i32 = -100;
-    const ARM_LOWER_DUTY_CYCLE: i32 = -50;
+    const ARM_LOWER_DUTY_CYCLE: i32 = -40;
     const PUMP_CREATE_VACUUM_CYCLE: i32 = -100;
     const PUMP_RELEASE_VACUUM_CYCLE: i32 = 100;
+
+    pub fn new(port_spec: Ev3PortSpec) -> Ev3Result<Self> {
+        let target = f64::from(TARGET_PRESSURE_GRAB);
+        let limit = 100.0;
+        let pump_pid = Pid::new(2.0, 0.1, 1.0, limit, limit, limit, limit, target);
+
+        Ok(Self {
+            pressure_sensor: MSPressureSensor::get(port_spec.pressure_sensor)?,
+            pump_motor: LargeMotor::get(port_spec.pump_motor)?,
+            arm_motor: MediumMotor::get(port_spec.arm_motor)?,
+            pump_pid,
+        })
+    }
 }
 
 impl GrabberHal for GrabberHalEv3 {
@@ -250,11 +278,15 @@ impl GrabberHal for GrabberHalEv3 {
     fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
         println!("send_pump_command: {command:?}");
         match command {
-            PumpCommand::CreateVacuum => {
+            PumpCommand::StartVacuum => {
                 self.pump_motor.set_duty_cycle_sp(GrabberHalEv3::PUMP_CREATE_VACUUM_CYCLE)?;
                 self.pump_motor.run_direct()?;
             }
-            PumpCommand::ReleaseVacuum => {
+            PumpCommand::CreateAndHoldVacuum => {
+                self.on_tick_while_holding()?;
+                self.pump_motor.run_direct()?;
+            }
+            PumpCommand::ReverseVacuum => {
                 self.pump_motor.set_duty_cycle_sp(GrabberHalEv3::PUMP_RELEASE_VACUUM_CYCLE)?;
                 self.pump_motor.run_direct()?;
             }
@@ -262,12 +294,23 @@ impl GrabberHal for GrabberHalEv3 {
         }
         Ok(())
     }
+
+    fn on_tick_while_holding(&mut self) -> anyhow::Result<()> {
+        let current = f64::from(self.current_pressure_pa()?);
+        let full_output = self.pump_pid.next_control_output(current);
+        let pid_output = full_output.output.approx_as_by::<i32, RoundToNearest>().unwrap();
+        // Refuse to go pump in reverse...
+        let duty_cycle = pid_output.min(0);
+        println!("on_tick_while_grabbed: current={current}, pid gave us {pid_output}, using {duty_cycle}");
+        self.pump_motor.set_duty_cycle_sp(duty_cycle)?;
+        Ok(())
+    }
 }
 
 impl BehaviourTreeFactory {
     pub fn create_bt(&self) -> Behavior<GrabberAction> {
         let make_contact = Action(DynamicAction::new(|s: &mut GrabberState| {
-            if s.set_pump_command(PumpCommand::CreateVacuum).is_err() {
+            if s.set_pump_command(PumpCommand::StartVacuum).is_err() {
                 return Failure;
             }
             if s.set_arm_command(ArmCommand::LowerToGrab).is_err() {
@@ -281,6 +324,9 @@ impl BehaviourTreeFactory {
         }));
 
         let running_while_in_contact = Action(DynamicAction::new(|s: &mut GrabberState| {
+            if s.hal.on_tick_while_holding().is_err() {
+                return Failure;
+            }
             match s.suction_state() {
                 Ok(SuctionState::NoContact) => Failure,
                 Ok(_) => Running,
@@ -292,7 +338,7 @@ impl BehaviourTreeFactory {
             if s.set_arm_command(ArmCommand::Hold).is_err() {
                 return Failure;
             }
-            if s.set_pump_command(PumpCommand::CreateVacuum).is_err() {
+            if s.set_pump_command(PumpCommand::CreateAndHoldVacuum).is_err() {
                 return Failure;
             }
             match s.suction_state() {
@@ -325,7 +371,7 @@ impl BehaviourTreeFactory {
         }));
 
         let release_card = Action(DynamicAction::new(|s: &mut GrabberState| {
-            if s.set_pump_command(PumpCommand::ReleaseVacuum).is_err() {
+            if s.set_pump_command(PumpCommand::ReverseVacuum).is_err() {
                 return Failure;
             }
             match s.suction_state() {
