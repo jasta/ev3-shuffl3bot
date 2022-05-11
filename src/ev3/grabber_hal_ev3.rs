@@ -1,13 +1,13 @@
-use ev3dev_lang_rust::Ev3Result;
-use pid::Pid;
-use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
-use std::time::Duration;
-use anyhow::anyhow;
-use conv::{ConvUtil, RoundToNearest};
-use ev3dev_lang_rust::sensors::SensorPort;
 use crate::ev3::ms_pressure_sensor::MSPressureSensor;
 use crate::grabber_hal;
 use crate::grabber_hal::{ArmCommand, GrabberHal, PumpCommand};
+use anyhow::anyhow;
+use conv::{ConvUtil, RoundToNearest};
+use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
+use ev3dev_lang_rust::sensors::SensorPort;
+use ev3dev_lang_rust::Ev3Result;
+use pid::Pid;
+use std::time::Duration;
 
 pub struct GrabberHalEv3 {
     pressure_sensor: MSPressureSensor,
@@ -42,9 +42,13 @@ impl GrabberHalEv3 {
 
 impl GrabberHal for GrabberHalEv3 {
     fn calibrate(&mut self) -> anyhow::Result<()> {
-        self.arm_motor.set_duty_cycle_sp(GrabberHalEv3::ARM_CALIBRATE_DUTY_CYCLE)?;
+        self.arm_motor
+            .set_duty_cycle_sp(GrabberHalEv3::ARM_CALIBRATE_DUTY_CYCLE)?;
         self.arm_motor.run_direct()?;
-        if !self.arm_motor.wait_until(MediumMotor::STATE_STALLED, Some(Duration::from_secs(4))) {
+        if !self
+            .arm_motor
+            .wait_until(MediumMotor::STATE_STALLED, Some(Duration::from_secs(4)))
+        {
             return Err(anyhow!("Arm calibration failed!"));
         }
         self.arm_motor.reset()?;
@@ -62,18 +66,23 @@ impl GrabberHal for GrabberHalEv3 {
         println!("send_arm_command: {command:?}");
         match command {
             ArmCommand::LowerToGrab => {
-                self.arm_motor.set_duty_cycle_sp(GrabberHalEv3::ARM_LOWER_DUTY_CYCLE)?;
+                self.arm_motor
+                    .set_duty_cycle_sp(GrabberHalEv3::ARM_LOWER_DUTY_CYCLE)?;
                 self.arm_motor.run_direct()?;
             }
             ArmCommand::LowerToDrop => {
                 self.arm_motor.set_stop_action("coast")?;
-                self.arm_motor.set_speed_sp(GrabberHalEv3::ARM_LOWER_TO_DROP_SPEED)?;
-                self.arm_motor.run_to_abs_pos(Some(GrabberHalEv3::ARM_RELEASE_POS))?;
+                self.arm_motor
+                    .set_speed_sp(GrabberHalEv3::ARM_LOWER_TO_DROP_SPEED)?;
+                self.arm_motor
+                    .run_to_abs_pos(Some(GrabberHalEv3::ARM_RELEASE_POS))?;
             }
             ArmCommand::Raise => {
                 self.arm_motor.set_stop_action("brake")?;
-                self.arm_motor.set_speed_sp(GrabberHalEv3::ARM_RAISE_SPEED)?;
-                self.arm_motor.run_to_abs_pos(Some(GrabberHalEv3::ARM_RAISED_POS))?;
+                self.arm_motor
+                    .set_speed_sp(GrabberHalEv3::ARM_RAISE_SPEED)?;
+                self.arm_motor
+                    .run_to_abs_pos(Some(GrabberHalEv3::ARM_RAISED_POS))?;
             }
             ArmCommand::Hold => {
                 self.arm_motor.set_stop_action("brake")?;
@@ -91,7 +100,8 @@ impl GrabberHal for GrabberHalEv3 {
         println!("send_pump_command: {command:?}");
         match command {
             PumpCommand::StartVacuum => {
-                self.pump_motor.set_duty_cycle_sp(GrabberHalEv3::PUMP_CREATE_VACUUM_CYCLE)?;
+                self.pump_motor
+                    .set_duty_cycle_sp(GrabberHalEv3::PUMP_CREATE_VACUUM_CYCLE)?;
                 self.pump_motor.run_direct()?;
             }
             PumpCommand::CreateAndHoldVacuum => {
@@ -99,7 +109,8 @@ impl GrabberHal for GrabberHalEv3 {
                 self.pump_motor.run_direct()?;
             }
             PumpCommand::ReverseVacuum => {
-                self.pump_motor.set_duty_cycle_sp(GrabberHalEv3::PUMP_RELEASE_VACUUM_CYCLE)?;
+                self.pump_motor
+                    .set_duty_cycle_sp(GrabberHalEv3::PUMP_RELEASE_VACUUM_CYCLE)?;
                 self.pump_motor.run_direct()?;
             }
             PumpCommand::Stop => self.pump_motor.stop()?,
@@ -110,7 +121,10 @@ impl GrabberHal for GrabberHalEv3 {
     fn on_tick_while_holding(&mut self) -> anyhow::Result<()> {
         let current = f64::from(self.current_pressure_pa()?);
         let full_output = self.pump_pid.next_control_output(current);
-        let pid_output = full_output.output.approx_as_by::<i32, RoundToNearest>().unwrap();
+        let pid_output = full_output
+            .output
+            .approx_as_by::<i32, RoundToNearest>()
+            .unwrap();
         // Refuse to go pump in reverse...
         let duty_cycle = pid_output.min(0);
         println!("on_tick_while_grabbed: current={current}, pid gave us {pid_output}, using {duty_cycle}");

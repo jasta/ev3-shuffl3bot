@@ -1,5 +1,5 @@
-use std::rc::Rc;
 use ai_behavior::Status;
+use std::rc::Rc;
 
 pub struct DynamicAction<S> {
     pub action: Rc<dyn ActionTrait<S>>,
@@ -18,7 +18,9 @@ pub trait ActionTrait<S> {
 }
 
 impl<F, S> ActionTrait<S> for F
-where F: Fn(&mut S) -> Status {
+where
+    F: Fn(&mut S) -> Status,
+{
     fn handle(&self, state: &mut S) -> Status {
         (self)(state)
     }

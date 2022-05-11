@@ -15,12 +15,10 @@ impl GrabberHal for GrabberHalMock {
 
     fn current_pressure_pa(&self) -> anyhow::Result<u32> {
         let answer = match self.pump_command.unwrap_or(PumpCommand::Stop) {
-            PumpCommand::StartVacuum => {
-                match self.arm_command.unwrap_or(ArmCommand::Hold) {
-                    ArmCommand::LowerToGrab => grabber_hal::MIN_PRESSURE_CONTACT,
-                    _ => u32::MAX,
-                }
-            }
+            PumpCommand::StartVacuum => match self.arm_command.unwrap_or(ArmCommand::Hold) {
+                ArmCommand::LowerToGrab => grabber_hal::MIN_PRESSURE_CONTACT,
+                _ => u32::MAX,
+            },
             PumpCommand::CreateAndHoldVacuum => grabber_hal::MIN_PRESSURE_GRAB,
             PumpCommand::ReverseVacuum => u32::MAX,
             PumpCommand::Stop => u32::MAX,

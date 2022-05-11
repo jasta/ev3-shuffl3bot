@@ -1,8 +1,10 @@
-use ai_behavior::{Action, Behavior, Fail, Failure, Running, Sequence, Success, Wait, WhenAny, While};
-use std::time::Duration;
 use crate::dynamic_action::DynamicAction;
 use crate::grabber_hal;
 use crate::grabber_hal::{ArmCommand, GrabberHal, PumpCommand};
+use ai_behavior::{
+    Action, Behavior, Fail, Failure, Running, Sequence, Success, Wait, WhenAny, While,
+};
+use std::time::Duration;
 
 pub struct GrabberBehaviourTreeFactory;
 
@@ -37,7 +39,9 @@ impl GrabberBehaviourTreeFactory {
             if s.set_arm_command(ArmCommand::Hold).is_err() {
                 return Failure;
             }
-            if s.set_pump_command(PumpCommand::CreateAndHoldVacuum).is_err() {
+            if s.set_pump_command(PumpCommand::CreateAndHoldVacuum)
+                .is_err()
+            {
                 return Failure;
             }
             match s.suction_state() {
@@ -80,25 +84,28 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        Sequence(
-            vec![
-                self.WithTimeout(Duration::from_secs(5), make_contact),
-                While(
-                    Box::new(Sequence(
-                        vec![
-                            self.WithTimeout(Duration::from_secs(2), grab_card),
-                            self.WithTimeout(Duration::from_secs(2), lift_arm.clone()),
-                            Wait(Duration::from_secs(2).as_secs_f64()),
-                            self.WithTimeout(Duration::from_secs(2), lower_card),
-                        ])),
-                    vec![running_while_in_contact]),
-                self.WithTimeout(Duration::from_secs(5), release_card),
-                self.WithTimeout(Duration::from_secs(2), lift_arm),
-            ])
+        Sequence(vec![
+            self.WithTimeout(Duration::from_secs(5), make_contact),
+            While(
+                Box::new(Sequence(vec![
+                    self.WithTimeout(Duration::from_secs(2), grab_card),
+                    self.WithTimeout(Duration::from_secs(2), lift_arm.clone()),
+                    Wait(Duration::from_secs(2).as_secs_f64()),
+                    self.WithTimeout(Duration::from_secs(2), lower_card),
+                ])),
+                vec![running_while_in_contact],
+            ),
+            self.WithTimeout(Duration::from_secs(5), release_card),
+            self.WithTimeout(Duration::from_secs(2), lift_arm),
+        ])
     }
 
     #[allow(non_snake_case)]
-    fn WithTimeout(&self, period: Duration, action: Behavior<GrabberAction>) -> Behavior<GrabberAction> {
+    fn WithTimeout(
+        &self,
+        period: Duration,
+        action: Behavior<GrabberAction>,
+    ) -> Behavior<GrabberAction> {
         WhenAny(vec![Fail(Box::new(Wait(period.as_secs_f64()))), action])
     }
 }

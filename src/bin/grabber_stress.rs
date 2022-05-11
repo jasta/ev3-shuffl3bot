@@ -9,15 +9,15 @@
 //!
 //! This allows us to monitor the machine and confirm that this mechanism is working as expected.
 
-use std::{env, io, thread};
-use std::io::Write;
-use std::time::{Duration, Instant};
 use ai_behavior::{Behavior, State, Status};
 use anyhow::anyhow;
-use input::{Event, UpdateArgs};
 use ev3_shuffl3bot::grabber_bt::{GrabberAction, GrabberBehaviourTreeFactory, GrabberState};
 use ev3_shuffl3bot::grabber_hal::GrabberHal;
 use ev3_shuffl3bot::grabber_hal_factory::GrabberHalFactory;
+use input::{Event, UpdateArgs};
+use std::io::Write;
+use std::time::{Duration, Instant};
+use std::{env, io, thread};
 
 const TICK_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -37,7 +37,10 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_machine(behaviour: Behavior<GrabberAction>, hal: Box<dyn GrabberHal>) -> anyhow::Result<Box<dyn GrabberHal>> {
+fn run_machine(
+    behaviour: Behavior<GrabberAction>,
+    hal: Box<dyn GrabberHal>,
+) -> anyhow::Result<Box<dyn GrabberHal>> {
     let mut machine: State<GrabberAction, ()> = State::new(behaviour);
     let mut state = GrabberState::new(hal);
 
