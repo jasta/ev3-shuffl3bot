@@ -18,11 +18,9 @@ use std::time::{Duration, Instant};
 
 use ai_behavior::{Action, Behavior, Fail, Failure, Running, Select, Sequence, State, Status, Success, Wait, WhenAll, WhenAny, While};
 use anyhow::anyhow;
-use ev3dev_lang_rust::Ev3Result;
 use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
 use ev3dev_lang_rust::sensors::SensorPort;
 use input::{Event, UpdateArgs};
-use serde::{Serialize, Serializer};
 
 use ev3::ms_pressure_sensor::MSPressureSensor;
 use ev3_shuffl3bot::ev3;
@@ -32,8 +30,10 @@ const TICK_INTERVAL: Duration = Duration::from_millis(20);
 fn main() -> anyhow::Result<()> {
     let mut hal = create_hal()?;
     hal.calibrate()?;
-    let bt = BehaviourTreeFactory { hal: Rc::from(hal) }.create();
-    run_machine(State::new(bt))
+    let bt = BehaviourTreeFactory.create_bt();
+    run_machine(State::new(bt), hal)?
+    println!("Successful stress test!");
+    Ok(())
 }
 
 fn create_hal() -> anyhow::Result<Box<dyn GrabberHal>> {
@@ -48,8 +48,8 @@ fn create_hal() -> anyhow::Result<Box<dyn GrabberHal>> {
     }
 }
 
-fn run_machine(mut state: State<GrabberAction, ()>) -> anyhow::Result<()> {
-    let mut my_state = GrabberState::default();
+fn run_machine(mut state: State<GrabberAction, ()>, hal: Box<dyn GrabberHal>) -> anyhow::Result<()> {
+    let mut my_state = GrabberState::new(hal);
 
     let mut dt = 0.0;
     let mut ticks = 0;
@@ -83,26 +83,32 @@ fn run_machine(mut state: State<GrabberAction, ()>) -> anyhow::Result<()> {
     result
 }
 
-struct BehaviourTreeFactory {
-    hal: Rc<dyn GrabberHal>,
-}
+struct BehaviourTreeFactory;
 
 trait GrabberHal {
     fn calibrate(&mut self) -> anyhow::Result<()>;
     fn current_pressure_pa(&self) -> anyhow::Result<u32>;
-    fn send_arm_command(&self, command: ArmCommand) -> anyhow::Result<()>;
+    fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()>;
     fn is_arm_idle(&self) -> anyhow::Result<bool>;
-    fn send_pump_command(&self, command: PumpCommand) -> anyhow::Result<()>;
+    fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+enum SuctionState {
+    NoContact,
+    Contact,
+    Grab,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum ArmCommand {
-    Lower,
+    LowerToGrab,
+    LowerToDrop,
     Raise,
     Hold,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum PumpCommand {
     CreateVacuum,
     ReleaseVacuum,
@@ -111,13 +117,8 @@ enum PumpCommand {
 
 #[derive(Default)]
 struct GrabberHalMock {
-    state: Mutex<MockState>,
-}
-
-#[derive(Default)]
-struct MockState {
-    last_arm_command: Option<ArmCommand>,
-    last_pump_command: Option<PumpCommand>,
+    arm_command: Option<ArmCommand>,
+    pump_command: Option<PumpCommand>,
 }
 
 const MIN_PRESSURE_CONTACT: u32 = 100000;
@@ -130,12 +131,12 @@ impl GrabberHal for GrabberHalMock {
     }
 
     fn current_pressure_pa(&self) -> anyhow::Result<u32> {
-        let state = self.state.lock().unwrap();
-        let answer = match state.last_pump_command.as_ref().unwrap_or(&PumpCommand::Stop) {
+        let answer = match self.pump_command.unwrap_or(PumpCommand::Stop) {
             PumpCommand::CreateVacuum => {
-                match state.last_arm_command.as_ref().unwrap_or(&ArmCommand::Hold) {
-                    ArmCommand::Lower => MIN_PRESSURE_CONTACT,
-                    ArmCommand::Raise => u32::MAX,
+                match self.arm_command.unwrap_or(ArmCommand::Hold) {
+                    ArmCommand::LowerToGrab => MIN_PRESSURE_CONTACT,
+                    ArmCommand::LowerToDrop => MIN_PRESSURE_GRAB,
+                    ArmCommand::Raise => MIN_PRESSURE_GRAB,
                     ArmCommand::Hold => MIN_PRESSURE_GRAB,
                 }
             }
@@ -146,15 +147,16 @@ impl GrabberHal for GrabberHalMock {
         Ok(answer)
     }
 
-    fn send_arm_command(&self, command: ArmCommand) -> anyhow::Result<()> {
+    fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
         println!("send_arm_command: {command:?}");
-        self.state.lock().unwrap().last_arm_command = Some(command);
+        self.arm_command = Some(command);
         Ok(())
     }
 
     fn is_arm_idle(&self) -> anyhow::Result<bool> {
-        let answer = match self.state.lock().unwrap().last_arm_command.as_ref().unwrap_or(&ArmCommand::Hold) {
-            ArmCommand::Lower => false,
+        let answer = match self.arm_command.unwrap_or(ArmCommand::Hold) {
+            ArmCommand::LowerToGrab => false,
+            ArmCommand::LowerToDrop => true,
             ArmCommand::Raise => true,
             ArmCommand::Hold => false,
         };
@@ -162,9 +164,9 @@ impl GrabberHal for GrabberHalMock {
         Ok(answer)
     }
 
-    fn send_pump_command(&self, command: PumpCommand) -> anyhow::Result<()> {
+    fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
         println!("send_pump_command: {command:?}");
-        self.state.lock().unwrap().last_pump_command = Some(command);
+        self.pump_command = Some(command);
         Ok(())
     }
 }
@@ -177,6 +179,7 @@ struct GrabberHalEv3 {
 
 impl GrabberHalEv3 {
     const ARM_RAISED_POS: i32 = 10;
+    const ARM_RELEASE_POS: i32 = 40;
     const ARM_LOWER_DUTY_CYCLE: i32 = -30;
     const PUMP_CREATE_VACUUM_CYCLE: i32 = -100;
     const PUMP_RELEASE_VACUUM_CYCLE: i32 = 100;
@@ -194,11 +197,15 @@ impl GrabberHal for GrabberHalEv3 {
         Ok(u32::try_from(reading)?)
     }
 
-    fn send_arm_command(&self, command: ArmCommand) -> anyhow::Result<()> {
+    fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
         match command {
-            ArmCommand::Lower => {
+            ArmCommand::LowerToGrab => {
                 self.arm_motor.set_duty_cycle_sp(GrabberHalEv3::ARM_LOWER_DUTY_CYCLE)?;
                 self.arm_motor.run_direct()?;
+            }
+            ArmCommand::LowerToDrop => {
+                self.arm_motor.set_stop_action("coast")?;
+                self.arm_motor.run_to_abs_pos(Some(GrabberHalEv3::ARM_RELEASE_POS))?;
             }
             ArmCommand::Raise => {
                 self.arm_motor.set_stop_action("brake")?;
@@ -216,7 +223,7 @@ impl GrabberHal for GrabberHalEv3 {
         Ok(self.arm_motor.get_state()?.is_empty())
     }
 
-    fn send_pump_command(&self, command: PumpCommand) -> anyhow::Result<()> {
+    fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
         match command {
             PumpCommand::CreateVacuum => {
                 self.pump_motor.set_duty_cycle_sp(GrabberHalEv3::PUMP_CREATE_VACUUM_CYCLE)?;
@@ -233,117 +240,143 @@ impl GrabberHal for GrabberHalEv3 {
 }
 
 impl BehaviourTreeFactory {
-    pub fn create(&self) -> Behavior<GrabberAction> {
-        Sequence(vec![self.get_ready_to_move(), self.bt_release()])
-    }
-
-    fn get_ready_to_move(&self) -> Behavior<GrabberAction> {
-        let is_ready = Action(DynamicAction::new(|s: &mut GrabberState| {
-            println!("ready_to_move: {}", s.ready_to_move);
-            if s.ready_to_move { Success } else { Failure }
-        }));
-
-        WhenAny(
-            vec![
-                is_ready,
-                Sequence(vec![self.make_contact(), self.bt_secure_grab(), self.bt_lift()])])
-    }
-
-    fn make_contact(&self) -> Behavior<GrabberAction> {
-        let contact_hal = self.hal.clone();
-        let down_and_pump_hal = self.hal.clone();
-        let hold_down_hal = self.hal.clone();
-        let has_contact = Action(DynamicAction::new(move |_s: &mut GrabberState| {
-            match contact_hal.current_pressure_pa() {
-                Ok(reading) if reading <= MIN_PRESSURE_CONTACT => Success,
-                _ => Failure,
-            }
-        }));
-        let down_and_pump = Action(DynamicAction::new(move |_s: &mut GrabberState| {
-            if down_and_pump_hal.send_pump_command(PumpCommand::CreateVacuum).is_err() {
+    pub fn create_bt(&self) -> Behavior<GrabberAction> {
+        let make_contact = Action(DynamicAction::new(|s: &mut GrabberState| {
+            if s.set_pump_command(PumpCommand::CreateVacuum).is_err() {
                 return Failure;
             }
-            if down_and_pump_hal.send_arm_command(ArmCommand::Lower).is_err() {
+            if s.set_arm_command(ArmCommand::LowerToGrab).is_err() {
                 return Failure;
             }
-            Running
-        }));
-        let send_hold_down = Action(DynamicAction::new(move |_s: &mut GrabberState| {
-            if hold_down_hal.send_arm_command(ArmCommand::Hold).is_err() {
-                return Failure;
-            }
-            Success
-        }));
-        Sequence(
-            vec![
-                WhenAny(vec![
-                    has_contact,
-                    While(Box::new(Fail(Box::new(Wait(5.0)))), vec![down_and_pump])]),
-                send_hold_down])
-    }
-
-    fn bt_secure_grab(&self) -> Behavior<GrabberAction> {
-        let grab_hal = self.hal.clone();
-        let has_grab = Action(DynamicAction::new(move |_s: &mut GrabberState| {
-            match grab_hal.current_pressure_pa() {
-                Ok(reading) if reading <= MIN_PRESSURE_GRAB => Success,
+            match s.suction_state() {
+                Ok(SuctionState::Contact) => Success,
+                Ok(_) => Running,
                 _ => Failure,
             }
         }));
 
-        // TODO: I think we need to change how fast the pump operates here or adjust how hard the
-        // arm grabs in order to overcome the suction problem from the cards underneath.
-        has_grab
-    }
-
-    fn bt_lift(&self) -> Behavior<GrabberAction> {
-        let is_lifted_hal = self.hal.clone();
-        let lift_hal = self.hal.clone();
-        let is_idle = Action(DynamicAction::new(move |s: &mut GrabberState| {
-            match is_lifted_hal.is_arm_idle() {
-                Ok(is_idle) if is_idle => {
-                    s.ready_to_move = true;
-                    Success
-                },
+        let running_while_in_contact = Action(DynamicAction::new(|s: &mut GrabberState| {
+            match s.suction_state() {
+                Ok(SuctionState::NoContact) => Failure,
+                Ok(_) => Running,
                 _ => Failure,
             }
         }));
-        let send_lift = Action(DynamicAction::new(move |_s: &mut GrabberState| {
-            if lift_hal.send_arm_command(ArmCommand::Raise).is_err() {
-                return Failure
+
+        let grab_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+            if s.set_arm_command(ArmCommand::Hold).is_err() {
+                return Failure;
             }
-            Success
+            if s.set_pump_command(PumpCommand::CreateVacuum).is_err() {
+                return Failure;
+            }
+            match s.suction_state() {
+                Ok(SuctionState::Grab) => Success,
+                Ok(_) => Running,
+                _ => Failure,
+            }
+        }));
+
+        let lift_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+            if s.set_arm_command(ArmCommand::Raise).is_err() {
+                return Failure;
+            }
+            match s.hal.is_arm_idle() {
+                Ok(true) => Success,
+                Ok(_) => Running,
+                _ => Failure,
+            }
+        }));
+
+        let lower_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+            if s.set_arm_command(ArmCommand::LowerToDrop).is_err() {
+                return Failure;
+            }
+            match s.hal.is_arm_idle() {
+                Ok(true) => Success,
+                Ok(_) => Running,
+                _ => Failure,
+            }
+        }));
+
+        let release_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+            if s.set_pump_command(PumpCommand::ReleaseVacuum).is_err() {
+                return Failure;
+            }
+            match s.suction_state() {
+                Ok(SuctionState::NoContact) => Success,
+                Ok(_) => Running,
+                _ => Failure,
+            }
         }));
 
         Sequence(
             vec![
-                send_lift,
-                While(Box::new(Fail(Box::new(Wait(5.0)))), vec![is_idle])])
+                self.WithTimeout(Duration::from_secs(5), make_contact),
+                While(
+                    Box::new(Sequence(
+                        vec![
+                            self.WithTimeout(Duration::from_secs(2), grab_card),
+                            self.WithTimeout(Duration::from_secs(2), lift_card),
+                            Wait(Duration::from_secs(2).as_secs_f64()),
+                            self.WithTimeout(Duration::from_secs(2), lower_card),
+                        ])),
+                    vec![running_while_in_contact]),
+                self.WithTimeout(Duration::from_secs(5), release_card),
+            ])
     }
 
-    fn bt_release(&self) -> Behavior<GrabberAction> {
-        let contact_hal = self.hal.clone();
-        let release_hal = self.hal.clone();
-        let lost_contact = Action(DynamicAction::new(move |_s: &mut GrabberState| {
-             match contact_hal.current_pressure_pa() {
-                 Ok(reading) if reading > MIN_PRESSURE_CONTACT => Success,
-                 _ => Failure,
-             }
-        }));
-        let release_pressure = Action(DynamicAction::new(move |_s: &mut GrabberState| {
-            if release_hal.send_pump_command(PumpCommand::ReleaseVacuum).is_err() {
-                return Failure;
-            }
-            Running
-        }));
-
-        WhenAny(vec![lost_contact, release_pressure])
+    #[allow(non_snake_case)]
+    fn WithTimeout(&self, period: Duration, action: Behavior<GrabberAction>) -> Behavior<GrabberAction> {
+        WhenAny(vec![Fail(Box::new(Wait(period.as_secs_f64()))), action])
     }
 }
 
-#[derive(Default, Serialize)]
 struct GrabberState {
-    ready_to_move: bool,
+    hal: Box<dyn GrabberHal>,
+    arm_command: Option<ArmCommand>,
+    pump_command: Option<PumpCommand>,
+}
+
+impl GrabberState {
+    pub fn new(hal: Box<dyn GrabberHal>) -> Self {
+        Self {
+            hal,
+            arm_command: None,
+            pump_command: None,
+        }
+    }
+
+    pub fn has_suction_state(&self, query: SuctionState) -> bool {
+        match self.suction_state() {
+            Ok(state) if state == query => true,
+            _ => false,
+        }
+    }
+
+    pub fn suction_state(&self) -> anyhow::Result<SuctionState> {
+        match self.hal.current_pressure_pa()? {
+            reading if reading <= MIN_PRESSURE_GRAB => Ok(SuctionState::Grab),
+            reading if reading <= MIN_PRESSURE_CONTACT => Ok(SuctionState::Contact),
+            _ => Ok(SuctionState::NoContact),
+        }
+    }
+
+    pub fn set_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
+        if self.arm_command.replace(command) != Some(command) {
+            self.hal.send_arm_command(command)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn set_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
+        if self.pump_command.replace(command) != Some(command) {
+            self.hal.send_pump_command(command)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 type GrabberAction = DynamicAction<GrabberState>;
@@ -357,12 +390,6 @@ impl<S> Clone for DynamicAction<S> {
         Self {
             action: self.action.clone(),
         }
-    }
-}
-
-impl<State> Serialize for DynamicAction<State> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-        serializer.serialize_str("{action}")
     }
 }
 
