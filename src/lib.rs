@@ -1,6 +1,8 @@
 pub mod shuffle_solver;
-mod suction_pump_machine;
 
-pub mod ev3;
-mod suction_pump_hal;
-mod pressure_sampler;
+mod ev3;
+pub mod grabber_hal;
+mod grabber_hal_mock;
+pub mod dynamic_action;
+pub mod grabber_bt;
+pub mod grabber_hal_factory;

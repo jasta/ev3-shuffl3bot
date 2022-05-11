@@ -15,7 +15,6 @@ futures-signals = "0.3.25"
 tokio = { version = "1.18.2", features = [ "time", "rt", "macros", "sync", "test-util" ] }
 thiserror = "1.0.31"
 derive-new = "0.5.9"
-state_machine = { path = "state_machine" }
 piston-ai_behavior = "0.33.0"
 pistoncore-input = "1.0.1"
 serde = { version = "1.0.137", features = ["derive"] }

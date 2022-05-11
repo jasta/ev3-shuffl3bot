@@ -1,2 +1,2 @@
-mod ev3_suction_pump_hal;
-pub mod ms_pressure_sensor;
+mod ms_pressure_sensor;
+pub(crate) mod grabber_hal_ev3;
