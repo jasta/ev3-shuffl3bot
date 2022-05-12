@@ -1,6 +1,6 @@
 use crate::ev3::ms_pressure_sensor::MSPressureSensor;
-use crate::grabber_hal;
-use crate::grabber_hal::{ArmCommand, GrabberHal, PumpCommand};
+use crate::shuffler_hal;
+use crate::shuffler_hal::{ArmCommand, ShufflerHal, PumpCommand};
 use anyhow::{anyhow, Context};
 use conv::{ConvUtil, RoundToNearest};
 use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
@@ -9,7 +9,7 @@ use ev3dev_lang_rust::Ev3Result;
 use pid::Pid;
 use std::time::Duration;
 
-pub struct GrabberHalEv3 {
+pub struct ShufflerHalEv3 {
     pressure_sensor: MSPressureSensor,
     x_motor: MediumMotor,
     y_motor: MediumMotor,
@@ -18,7 +18,7 @@ pub struct GrabberHalEv3 {
     pump_pid: Pid<f64>,
 }
 
-impl GrabberHalEv3 {
+impl ShufflerHalEv3 {
     const X_MOTOR_CALIBRATE_DUTY_CYCLE: i32 = -60;
     const X_MOTOR_TRANSLATE_SPEED: i32 = 900;
     const Y_MOTOR_CALIBRATE_DUTY_CYCLE: i32 = -80;
@@ -31,7 +31,7 @@ impl GrabberHalEv3 {
     const ARM_CALIBRATE_DUTY_CYCLE: i32 = 50;
     const ARM_CONFIRM_GRAB_REL_POS: i32 = 100;
     const ARM_CONFIRM_GRAB_MOVE_SPEED: i32 = 300;
-    const ARM_RAISE_TO_MOVE_POS: i32 = GrabberHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT;
+    const ARM_RAISE_TO_MOVE_POS: i32 = ShufflerHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT;
     const ARM_RAISE_TO_MOVE_SPEED: i32 = 600;
     const ARM_LOWER_TO_DROP_SPEED: i32 = -600;
     const ARM_RELEASE_POS: i32 = -100;
@@ -52,7 +52,7 @@ impl GrabberHalEv3 {
     ];
 
     pub fn new(port_spec: Ev3PortSpec) -> Ev3Result<Self> {
-        let target = f64::from(grabber_hal::TARGET_PRESSURE_GRAB);
+        let target = f64::from(shuffler_hal::TARGET_PRESSURE_GRAB);
         let limit = 100.0;
         let pump_pid = Pid::new(2.0, 0.1, 1.0, limit, limit, limit, limit, target);
 
@@ -67,26 +67,26 @@ impl GrabberHalEv3 {
     }
 }
 
-impl GrabberHal for GrabberHalEv3 {
+impl ShufflerHal for ShufflerHalEv3 {
     fn calibrate_gantry(&mut self) -> anyhow::Result<()> {
         println!("Calibrating gantry...");
-        if self.arm_motor.get_position()? > GrabberHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT {
+        if self.arm_motor.get_position()? > ShufflerHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT {
             return Err(anyhow!("Arm is too far raised, cannot translate on X-axis!"));
         }
 
-        calibrate_motor("y", &self.y_motor, GrabberHalEv3::Y_MOTOR_CALIBRATE_DUTY_CYCLE)?;
-        calibrate_motor("x", &self.x_motor, GrabberHalEv3::X_MOTOR_CALIBRATE_DUTY_CYCLE)?;
+        calibrate_motor("y", &self.y_motor, ShufflerHalEv3::Y_MOTOR_CALIBRATE_DUTY_CYCLE)?;
+        calibrate_motor("x", &self.x_motor, ShufflerHalEv3::X_MOTOR_CALIBRATE_DUTY_CYCLE)?;
         Ok(())
     }
 
     fn calibrate_grabber(&mut self) -> anyhow::Result<()> {
         println!("Calibrating grabber...");
-        calibrate_motor("arm", &self.arm_motor, GrabberHalEv3::ARM_CALIBRATE_DUTY_CYCLE)?;
+        calibrate_motor("arm", &self.arm_motor, ShufflerHalEv3::ARM_CALIBRATE_DUTY_CYCLE)?;
         self.pump_motor.reset()?;
 
         // Move to the safe raised position so calibrate_gantry() doesn't freak out...
-        self.arm_motor.set_speed_sp(GrabberHalEv3::ARM_RAISE_TO_MOVE_SPEED)?;
-        self.arm_motor.run_to_abs_pos(Some(GrabberHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT))?;
+        self.arm_motor.set_speed_sp(ShufflerHalEv3::ARM_RAISE_TO_MOVE_SPEED)?;
+        self.arm_motor.run_to_abs_pos(Some(ShufflerHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT))?;
         if !self.arm_motor.wait_until_not_moving(Some(Duration::from_secs(2))) {
             return Err(anyhow!("Arm failed to stop moving, what?"));
         }
@@ -100,19 +100,19 @@ impl GrabberHal for GrabberHalEv3 {
     }
 
     fn send_move_to_row_command(&mut self, row: usize) -> anyhow::Result<()> {
-        let pos = *GrabberHalEv3::COLUMN_X_POSITIONS.get(row).unwrap();
+        let pos = *ShufflerHalEv3::COLUMN_X_POSITIONS.get(row).unwrap();
         println!("send_move_to_row_command: {row}, pos={pos}");
         self.x_motor.set_stop_action(MediumMotor::STOP_ACTION_HOLD)?;
-        self.x_motor.set_speed_sp(GrabberHalEv3::X_MOTOR_TRANSLATE_SPEED)?;
+        self.x_motor.set_speed_sp(ShufflerHalEv3::X_MOTOR_TRANSLATE_SPEED)?;
         self.x_motor.run_to_abs_pos(Some(pos))?;
         Ok(())
     }
 
     fn send_move_to_col_command(&mut self, col: usize) -> anyhow::Result<()> {
-        let pos = *GrabberHalEv3::ROW_Y_POSITIONS.get(col).unwrap();
+        let pos = *ShufflerHalEv3::ROW_Y_POSITIONS.get(col).unwrap();
         println!("send_move_to_col_command: {col}, pos={pos}");
         self.y_motor.set_stop_action(MediumMotor::STOP_ACTION_HOLD)?;
-        self.y_motor.set_speed_sp(GrabberHalEv3::Y_MOTOR_TRANSLATE_SPEED)?;
+        self.y_motor.set_speed_sp(ShufflerHalEv3::Y_MOTOR_TRANSLATE_SPEED)?;
         self.y_motor.run_to_abs_pos(Some(pos))?;
         Ok(())
     }
@@ -136,29 +136,29 @@ impl GrabberHal for GrabberHalEv3 {
         match command {
             ArmCommand::LowerToGrab => {
                 self.arm_motor
-                    .set_duty_cycle_sp(GrabberHalEv3::ARM_LOWER_DUTY_CYCLE)?;
+                    .set_duty_cycle_sp(ShufflerHalEv3::ARM_LOWER_DUTY_CYCLE)?;
                 self.arm_motor.run_direct()?;
             }
             ArmCommand::LowerToDrop => {
                 self.arm_motor.set_stop_action("coast")?;
                 self.arm_motor
-                    .set_speed_sp(GrabberHalEv3::ARM_LOWER_TO_DROP_SPEED)?;
+                    .set_speed_sp(ShufflerHalEv3::ARM_LOWER_TO_DROP_SPEED)?;
                 self.arm_motor
-                    .run_to_abs_pos(Some(GrabberHalEv3::ARM_RELEASE_POS))?;
+                    .run_to_abs_pos(Some(ShufflerHalEv3::ARM_RELEASE_POS))?;
             }
             ArmCommand::RaiseToMove => {
                 self.arm_motor.set_stop_action("brake")?;
                 self.arm_motor
-                    .set_speed_sp(GrabberHalEv3::ARM_RAISE_TO_MOVE_SPEED)?;
+                    .set_speed_sp(ShufflerHalEv3::ARM_RAISE_TO_MOVE_SPEED)?;
                 self.arm_motor
-                    .run_to_abs_pos(Some(GrabberHalEv3::ARM_RAISE_TO_MOVE_POS))?;
+                    .run_to_abs_pos(Some(ShufflerHalEv3::ARM_RAISE_TO_MOVE_POS))?;
             }
             ArmCommand::RaiseToConfirm => {
                 self.arm_motor.set_stop_action("hold")?;
-                self.arm_motor.set_speed_sp(GrabberHalEv3::ARM_CONFIRM_GRAB_MOVE_SPEED)?;
+                self.arm_motor.set_speed_sp(ShufflerHalEv3::ARM_CONFIRM_GRAB_MOVE_SPEED)?;
                 let current_pos = self.arm_motor.get_position()?;
-                let default_rel_pos = GrabberHalEv3::ARM_CONFIRM_GRAB_REL_POS;
-                let max_rel_pos = (current_pos - GrabberHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT).abs();
+                let default_rel_pos = ShufflerHalEv3::ARM_CONFIRM_GRAB_REL_POS;
+                let max_rel_pos = (current_pos - ShufflerHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT).abs();
 
                 let actual_rel_pos = default_rel_pos.min(max_rel_pos);
                 println!("pos={current_pos}, default={default_rel_pos}, max={max_rel_pos}, actual={actual_rel_pos}");
@@ -181,7 +181,7 @@ impl GrabberHal for GrabberHalEv3 {
         match command {
             PumpCommand::StartVacuum => {
                 self.pump_motor
-                    .set_duty_cycle_sp(GrabberHalEv3::PUMP_CREATE_VACUUM_CYCLE)?;
+                    .set_duty_cycle_sp(ShufflerHalEv3::PUMP_CREATE_VACUUM_CYCLE)?;
                 self.pump_motor.run_direct()?;
             }
             PumpCommand::CreateAndHoldVacuum => {
@@ -190,7 +190,7 @@ impl GrabberHal for GrabberHalEv3 {
             }
             PumpCommand::ReverseVacuum => {
                 self.pump_motor
-                    .set_duty_cycle_sp(GrabberHalEv3::PUMP_RELEASE_VACUUM_CYCLE)?;
+                    .set_duty_cycle_sp(ShufflerHalEv3::PUMP_RELEASE_VACUUM_CYCLE)?;
                 self.pump_motor.run_direct()?;
             }
             PumpCommand::Stop => self.pump_motor.stop()?,

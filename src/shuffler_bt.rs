@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 use crate::dynamic_action::DynamicAction;
-use crate::grabber_hal;
-use crate::grabber_hal::{ArmCommand, GrabberHal, PumpCommand};
+use crate::shuffler_hal;
+use crate::shuffler_hal::{ArmCommand, ShufflerHal, PumpCommand};
 use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Sequence, Success, Wait, WaitForever, WhenAny, While};
 use std::time::Duration;
 use futures_signals::signal::WaitFor;
 use crate::shuffle_solver::CardMove;
 
 #[derive(Default)]
-pub struct GrabberBehaviourTreeFactory {
+pub struct ShufflerBehaviourTreeFactory {
     options: Options,
 }
 
@@ -18,13 +18,13 @@ pub struct Options {
     pub fake_hw: bool,
 }
 
-impl GrabberBehaviourTreeFactory {
+impl ShufflerBehaviourTreeFactory {
     pub fn new(options: Options) -> Self {
         Self { options }
     }
 
-    pub fn create_bt(&self) -> Behavior<GrabberAction> {
-        let take_next_move = Action(DynamicAction::new(|s: &mut GrabberState| {
+    pub fn create_bt(&self) -> Behavior<ShufflerAction> {
+        let take_next_move = Action(DynamicAction::new(|s: &mut ShufflerState| {
             s.current_move = s.moves_queue.pop_front();
             println!("Next move is: {:?} (with {} after that)", s.current_move, s.moves_queue.len());
             if s.current_move.is_some() { Success } else { Failure }
@@ -33,7 +33,7 @@ impl GrabberBehaviourTreeFactory {
         let move_to_src_stack = self.MoveToStack(WhichStack::Src);
         let move_to_dst_stack = self.MoveToStack(WhichStack::Dst);
 
-        let make_contact = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let make_contact = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_pump_command(PumpCommand::StartVacuum).is_err() {
                 return Failure;
             }
@@ -47,7 +47,7 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        let running_while_in_contact = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let running_while_in_contact = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.hal.on_tick_while_holding().is_err() {
                 return Failure;
             }
@@ -58,7 +58,7 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        let grab_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let grab_card = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::Hold).is_err() {
                 return Failure;
             }
@@ -74,7 +74,7 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        let lift_arm_to_confirm = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let lift_arm_to_confirm = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::RaiseToConfirm).is_err() {
                 return Failure;
             }
@@ -85,7 +85,7 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        let lift_arm_to_move = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let lift_arm_to_move = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::RaiseToMove).is_err() {
                 return Failure;
             }
@@ -96,7 +96,7 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        let lower_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let lower_card = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::LowerToDrop).is_err() {
                 return Failure;
             }
@@ -107,7 +107,7 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        let release_card = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let release_card = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_pump_command(PumpCommand::ReverseVacuum).is_err() {
                 return Failure;
             }
@@ -118,7 +118,7 @@ impl GrabberBehaviourTreeFactory {
             }
         }));
 
-        let stop_pump = Action(DynamicAction::new(|s: &mut GrabberState| {
+        let stop_pump = Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_pump_command(PumpCommand::Stop).is_err() {
                 return Failure;
             }
@@ -164,8 +164,8 @@ impl GrabberBehaviourTreeFactory {
     }
 
     #[allow(non_snake_case)]
-    fn MoveToStack(&self, which_stack: WhichStack) -> Behavior<GrabberAction> {
-        Action(DynamicAction::new(move |s: &mut GrabberState| {
+    fn MoveToStack(&self, which_stack: WhichStack) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(move |s: &mut ShufflerState| {
             let current_move = s.current_move.as_ref().unwrap();
             let stack_index = match which_stack {
                 WhichStack::Src => current_move.src_stack,
@@ -185,12 +185,12 @@ impl GrabberBehaviourTreeFactory {
     #[allow(non_snake_case)]
     fn IfSkipMoves(
         &self,
-        if_true: Behavior<GrabberAction>,
-        if_false: Behavior<GrabberAction>,
-    ) -> Behavior<GrabberAction> {
+        if_true: Behavior<ShufflerAction>,
+        if_false: Behavior<ShufflerAction>,
+    ) -> Behavior<ShufflerAction> {
         let skip_moves = self.options.skip_moves;
         If(
-            Box::new(Action(DynamicAction::new(move |_s: &mut GrabberState| {
+            Box::new(Action(DynamicAction::new(move |_s: &mut ShufflerState| {
                 if skip_moves { Success } else { Failure }
             }))),
             Box::new(if_true),
@@ -198,8 +198,8 @@ impl GrabberBehaviourTreeFactory {
     }
 
     #[allow(non_snake_case)]
-    fn DoNothing(&self) -> Behavior<GrabberAction> {
-        Action(DynamicAction::new(|_s: &mut GrabberState| {
+    fn DoNothing(&self) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(|_s: &mut ShufflerState| {
             Success
         }))
     }
@@ -208,21 +208,21 @@ impl GrabberBehaviourTreeFactory {
     fn WithTimeout(
         &self,
         period: Duration,
-        action: Behavior<GrabberAction>,
-    ) -> Behavior<GrabberAction> {
+        action: Behavior<ShufflerAction>,
+    ) -> Behavior<ShufflerAction> {
         While(Box::new(action), vec![Fail(Box::new(Wait(period.as_secs_f64())))])
     }
 }
 
-pub type GrabberAction = DynamicAction<GrabberState>;
+pub type ShufflerAction = DynamicAction<ShufflerState>;
 
 pub enum WhichStack {
     Src,
     Dst,
 }
 
-pub struct GrabberState {
-    hal: Box<dyn GrabberHal>,
+pub struct ShufflerState {
+    hal: Box<dyn ShufflerHal>,
     moves_queue: VecDeque<CardMove>,
     current_move: Option<CardMove>,
     num_rows: usize,
@@ -232,8 +232,8 @@ pub struct GrabberState {
     pump_command: Option<PumpCommand>,
 }
 
-impl GrabberState {
-    pub fn new(hal: Box<dyn GrabberHal>, moves_queue: VecDeque<CardMove>, num_rows: usize) -> Self {
+impl ShufflerState {
+    pub fn new(hal: Box<dyn ShufflerHal>, moves_queue: VecDeque<CardMove>, num_rows: usize) -> Self {
         Self {
             hal,
             moves_queue,
@@ -250,7 +250,7 @@ impl GrabberState {
         self.moves_queue.is_empty() && self.current_move.is_none()
     }
 
-    pub fn into_hal(self) -> Box<dyn GrabberHal> {
+    pub fn into_hal(self) -> Box<dyn ShufflerHal> {
         self.hal
     }
 
@@ -278,8 +278,8 @@ impl GrabberState {
 
     pub fn suction_state(&self) -> anyhow::Result<SuctionState> {
         match self.hal.current_pressure_pa()? {
-            reading if reading <= grabber_hal::MIN_PRESSURE_GRAB => Ok(SuctionState::Grab),
-            reading if reading <= grabber_hal::MIN_PRESSURE_CONTACT => Ok(SuctionState::Contact),
+            reading if reading <= shuffler_hal::MIN_PRESSURE_GRAB => Ok(SuctionState::Grab),
+            reading if reading <= shuffler_hal::MIN_PRESSURE_CONTACT => Ok(SuctionState::Contact),
             _ => Ok(SuctionState::NoContact),
         }
     }

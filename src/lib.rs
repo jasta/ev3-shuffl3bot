@@ -2,7 +2,7 @@ pub mod shuffle_solver;
 
 pub mod dynamic_action;
 mod ev3;
-pub mod grabber_bt;
-pub mod grabber_hal;
-pub mod grabber_hal_factory;
-mod grabber_hal_mock;
+pub mod shuffler_bt;
+pub mod shuffler_hal;
+pub mod shuffler_hal_factory;
+mod shuffler_hal_mock;

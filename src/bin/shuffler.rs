@@ -19,9 +19,9 @@ use anyhow::anyhow;
 use clap::Parser;
 use input::{Event, UpdateArgs};
 
-use ev3_shuffl3bot::grabber_bt::{GrabberAction, GrabberBehaviourTreeFactory, GrabberState, Options};
-use ev3_shuffl3bot::grabber_hal::GrabberHal;
-use ev3_shuffl3bot::grabber_hal_factory::GrabberHalFactory;
+use ev3_shuffl3bot::shuffler_bt::{ShufflerAction, ShufflerBehaviourTreeFactory, ShufflerState, Options};
+use ev3_shuffl3bot::shuffler_hal::ShufflerHal;
+use ev3_shuffl3bot::shuffler_hal_factory::ShufflerHalFactory;
 use ev3_shuffl3bot::shuffle_solver::{CardMove, ShuffleSolver, ShuffleSolverOptions};
 
 #[derive(Parser, Debug)]
@@ -49,7 +49,7 @@ const OUTPUT_STACK: usize = 2;
 fn main() -> anyhow::Result<()> {
     let opts: Opts = Opts::parse();
 
-    let mut hal = GrabberHalFactory::new_maybe_mock(opts.fake_hw).create_hal()?;
+    let mut hal = ShufflerHalFactory::new_maybe_mock(opts.fake_hw).create_hal()?;
     hal.calibrate_grabber()?;
     if !opts.skip_moves {
         hal.calibrate_gantry()?;
@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
     if opts.calibrate_only {
         return Ok(());
     }
-    let bt_factory = GrabberBehaviourTreeFactory::new(Options {
+    let bt_factory = ShufflerBehaviourTreeFactory::new(Options {
         skip_moves: opts.skip_moves,
         fake_hw: opts.fake_hw,
     });
@@ -82,12 +82,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn run_machine(
-    behaviour: Behavior<GrabberAction>,
-    hal: Box<dyn GrabberHal>,
+    behaviour: Behavior<ShufflerAction>,
+    hal: Box<dyn ShufflerHal>,
     moves: VecDeque<CardMove>,
-) -> anyhow::Result<Box<dyn GrabberHal>> {
-    let mut machine: State<GrabberAction, ()> = State::new(behaviour);
-    let mut state = GrabberState::new(hal, moves, NUM_ROWS);
+) -> anyhow::Result<Box<dyn ShufflerHal>> {
+    let mut machine: State<ShufflerAction, ()> = State::new(behaviour);
+    let mut state = ShufflerState::new(hal, moves, NUM_ROWS);
 
     let mut dt = 0.0;
     let mut ticks = 0;
