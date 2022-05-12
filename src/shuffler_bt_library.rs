@@ -14,7 +14,7 @@ pub struct ShufflerBehaviourTreeLibrary;
 #[allow(non_snake_case)]
 impl ShufflerBehaviourTreeLibrary {
     /// Main BT to do the shuffling (and also for some reason the grabber test???)
-    pub fn shuffle_or_grabber_stress_bt(&self, skip_moves: bool, fake_hw: bool) -> Behavior<ShufflerAction> {
+    pub fn MoveCards(&self, skip_moves: bool, fake_hw: bool) -> Behavior<ShufflerAction> {
         let do_move = Sequence(vec![
             self.TakeNextMove(),
             self.IfBool(
@@ -22,24 +22,7 @@ impl ShufflerBehaviourTreeLibrary {
                 self.DoNothing(),
                 self.MoveToStack(WhichStack::Src)),
             self.MakeContact(),
-            While(
-                Box::new(Sequence(vec![
-                    self.GrabCard(),
-                    self.WaitUnless(fake_hw, Duration::from_millis(100)),
-                    self.Jiggle(),
-                    self.WaitUnless(fake_hw, Duration::from_millis(2000)),
-                    self.LiftArmToMove(),
-                    self.IfBool(
-                        skip_moves,
-                        self.WaitUnless(fake_hw, Duration::from_secs(1)),
-                        self.MoveToStack(WhichStack::Dst)),
-                    self.LowerCard(),
-                ])),
-                vec![self.RunningWhileInContact()],
-            ),
-            self.ReleaseCard(),
-            self.WaitUnless(fake_hw, Duration::from_millis(100)),
-            self.LiftArmToMove(),
+            self.GrabAndMoveCardToDst(skip_moves, fake_hw),
             self.IfBool(
                 skip_moves,
                 Sequence(vec![
@@ -48,13 +31,43 @@ impl ShufflerBehaviourTreeLibrary {
                 self.DoNothing()),
         ]);
 
-        While(Box::new(WaitForever), vec![do_move])
+        self.Repeat(do_move)
     }
 
-    /// "Utility" BT that cleans up after a failed run and puts the deck back in the correct
-    /// position to sort (i.e. picks up all the stacks and puts them all back in the input stack)
-    pub fn create_cleanup_bt(&self) -> Behavior<ShufflerAction> {
-        todo!()
+    pub fn MoveAllCardsToStack(&self, dst_stack: usize, fake_hw: bool) -> Behavior<ShufflerAction> {
+        let do_move = Sequence(vec![
+            self.MaybeSetupNextStackToClear(dst_stack),
+            self.MoveToStack(WhichStack::Src),
+            If(
+                Box::new(self.MakeContact()),
+                Box::new(self.GrabAndMoveCardToDst(false, fake_hw)),
+                Box::new(self.MarkCurrentStackCleared())),
+        ]);
+
+        self.Repeat(do_move)
+    }
+
+    fn GrabAndMoveCardToDst(&self, skip_moves: bool, fake_hw: bool) -> Behavior<ShufflerAction> {
+        Sequence(
+            vec![
+                While(
+                    Box::new(Sequence(vec![
+                        self.GrabCard(),
+                        self.WaitUnless(fake_hw, Duration::from_millis(100)),
+                        self.JiggleAFewTimes(),
+                        self.WaitUnless(fake_hw, Duration::from_millis(2000)),
+                        self.LiftArmToMove(),
+                        self.IfBool(
+                            skip_moves,
+                            self.WaitUnless(fake_hw, Duration::from_secs(1)),
+                            self.MoveToStack(WhichStack::Dst)),
+                        self.LowerCard(),
+                    ])),
+                    vec![self.RunningWhileInContact()]),
+                self.ReleaseCard(),
+                self.WaitUnless(fake_hw, Duration::from_millis(100)),
+                self.LiftArmToMove(),
+            ])
     }
 
     fn TakeNextMove(&self) -> Behavior<ShufflerAction> {
@@ -66,13 +79,31 @@ impl ShufflerBehaviourTreeLibrary {
         }))
     }
 
-    // fn SetupNextStackToCleanup(&self) -> Behavior<ShufflerAction> {
-    //     Action(DynamicAction::new(|s: &mut ShufflerState| {
-    //         s.current_move = s.moves_queue.pop_front();
-    //         println!("Next move is: {:?} (with {} after that)", s.current_move, s.moves_queue.len());
-    //         if s.current_move.is_some() { Success } else { Failure }
-    //     }))
-    // }
+    fn MaybeSetupNextStackToClear(&self, dst_stack: usize) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(move |s: &mut ShufflerState| {
+            match s.current_move {
+                None => {
+                    let queue = s.cleanup_stacks_queue.as_mut().unwrap();
+                    match queue.pop_front() {
+                        Some(next) => {
+                            s.current_move = Some(CardMove { src_stack: next, dst_stack });
+                            println!("Next moves are: {:?} (with {} after that)", s.current_move, queue.len());
+                            Success
+                        }
+                        None => Failure,
+                    }
+                },
+                Some(_) => Success,
+            }
+        }))
+    }
+
+    fn MarkCurrentStackCleared(&self) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(|s: &mut ShufflerState| {
+            s.current_move = None;
+            Success
+        }))
+    }
 
     fn MakeContact(&self) -> Behavior<ShufflerAction> {
         self.WithTimeout(Duration::from_secs(3), Action(DynamicAction::new(|s: &mut ShufflerState| {
@@ -121,7 +152,7 @@ impl ShufflerBehaviourTreeLibrary {
         })))
     }
 
-    fn Jiggle(&self) -> Behavior<ShufflerAction> {
+    fn JiggleAFewTimes(&self) -> Behavior<ShufflerAction> {
         let num_jiggles = 4;
 
         let jiggle_high = Action(DynamicAction::new(|s: &mut ShufflerState| {
@@ -221,6 +252,10 @@ impl ShufflerBehaviourTreeLibrary {
                 _ => Failure,
             }
         }))))
+    }
+
+    fn Repeat(&self, action: Behavior<ShufflerAction>) -> Behavior<ShufflerAction> {
+        While(Box::new(WaitForever), vec![action])
     }
 
     fn IfBool(

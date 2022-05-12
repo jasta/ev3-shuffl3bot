@@ -16,15 +16,16 @@ use std::time::{Duration, Instant};
 
 use ai_behavior::{Behavior, State, Status};
 use anyhow::anyhow;
-use clap::Parser;
+use clap::{ArgEnum, Parser};
 use input::{Event, UpdateArgs};
 
 use ev3_shuffl3bot::shuffler_bt_library::{ShufflerAction, ShufflerState};
 use ev3_shuffl3bot::shuffler_hal::ShufflerHal;
 use ev3_shuffl3bot::shuffler_hal_factory::ShufflerHalFactory;
 use ev3_shuffl3bot::shuffle_solver::{CardMove, ShuffleSolver, ShuffleSolverOptions};
-use ev3_shuffl3bot::shuffler_bt_resolver::{Options, ShufflerBehaviourTreeResolver, ShufflerTreeHolder};
+use ev3_shuffl3bot::shuffler_bt_resolver::{Options, ResolverMode, ShufflerBehaviourTreeResolver, ShufflerTreeHolder};
 use ev3_shuffl3bot::shuffler_bt_runner::ShufflerBehaviourTreeRunner;
+use crate::CliMode::Calibrate;
 
 #[derive(Parser, Debug)]
 #[clap(name = "shuffler")]
@@ -38,8 +39,15 @@ struct Opts {
     #[clap(long)]
     fake_hw: bool,
 
-    #[clap(long)]
-    calibrate_only: bool,
+    #[clap(short = 'm', long, arg_enum, default_value = "shuffle")]
+    mode: CliMode,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, ArgEnum)]
+pub enum CliMode {
+    Shuffle,
+    Cleanup,
+    Calibrate,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -50,12 +58,15 @@ fn main() -> anyhow::Result<()> {
     if !opts.skip_moves {
         hal.calibrate_gantry()?;
     }
-    if opts.calibrate_only {
-        return Ok(());
-    }
+    let bt_mode = match opts.mode {
+        Calibrate => return Ok(()),
+        CliMode::Shuffle => ResolverMode::Shuffle,
+        CliMode::Cleanup => ResolverMode::CleanupStacks,
+    };
     let bt_factory = ShufflerBehaviourTreeResolver::new(Options {
         skip_moves: opts.skip_moves,
         fake_hw: opts.fake_hw,
+        mode: bt_mode,
     });
 
     let holder = bt_factory.resolve(hal, opts.deck_size);

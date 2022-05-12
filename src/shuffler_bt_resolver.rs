@@ -20,6 +20,18 @@ pub struct ShufflerBehaviourTreeResolver {
 pub struct Options {
     pub skip_moves: bool,
     pub fake_hw: bool,
+    pub mode: ResolverMode,
+}
+
+pub enum ResolverMode {
+    Shuffle,
+    CleanupStacks,
+}
+
+impl Default for ResolverMode {
+    fn default() -> Self {
+        ResolverMode::Shuffle
+    }
 }
 
 impl ShufflerBehaviourTreeResolver {
@@ -28,28 +40,45 @@ impl ShufflerBehaviourTreeResolver {
     }
 
     pub fn resolve(&self, hal: Box<dyn ShufflerHal>, deck_size: usize) -> ShufflerTreeHolder {
-        let moves = if self.options.skip_moves {
-            let dummy_move = CardMove { src_stack: 0, dst_stack: 0 };
-            VecDeque::from(vec![dummy_move; deck_size])
-        } else {
-            let solution = ShuffleSolver::solve(ShuffleSolverOptions {
-                deck_size,
-                num_stacks: NUM_ROWS * NUM_COLS,
-                input_stack: INPUT_STACK,
-                output_stack: OUTPUT_STACK,
-            });
-            VecDeque::from(solution.required_moves)
-        };
-        println!("Generated {} moves, let's do this...", moves.len());
+        let library = ShufflerBehaviourTreeLibrary;
+        match self.options.mode {
+            ResolverMode::Shuffle => {
+                let moves = if self.options.skip_moves {
+                    let dummy_move = CardMove { src_stack: 0, dst_stack: 0 };
+                    VecDeque::from(vec![dummy_move; deck_size])
+                } else {
+                    let solution = ShuffleSolver::solve(ShuffleSolverOptions {
+                        deck_size,
+                        num_stacks: NUM_ROWS * NUM_COLS,
+                        input_stack: INPUT_STACK,
+                        output_stack: OUTPUT_STACK,
+                    });
+                    VecDeque::from(solution.required_moves)
+                };
+                println!("Generated {} moves, let's do this...", moves.len());
 
-        let bt = ShufflerBehaviourTreeLibrary.shuffle_or_grabber_stress_bt(self.options.skip_moves, self.options.fake_hw);
-        let state = ShufflerState::new(ShuffleStateArgs {
-            hal,
-            num_rows: NUM_ROWS,
-            moves_queue: Some(moves),
-            cleanup_stacks_queue: None,
-        });
-        ShufflerTreeHolder { bt, state }
+                let bt = library.MoveCards(self.options.skip_moves, self.options.fake_hw);
+                let state = ShufflerState::new(ShuffleStateArgs {
+                    hal,
+                    num_rows: NUM_ROWS,
+                    moves_queue: Some(moves),
+                    cleanup_stacks_queue: None,
+                });
+                ShufflerTreeHolder { bt, state }
+            },
+            ResolverMode::CleanupStacks => {
+                let bt = library.MoveAllCardsToStack(INPUT_STACK, self.options.fake_hw);
+
+                let cleanup_stacks_queue: Vec<_> = (0..(NUM_ROWS*NUM_COLS)).collect();
+                let state = ShufflerState::new(ShuffleStateArgs {
+                    hal,
+                    num_rows: NUM_ROWS,
+                    moves_queue: None,
+                    cleanup_stacks_queue: Some(VecDeque::from(cleanup_stacks_queue)),
+                });
+                ShufflerTreeHolder { bt, state }
+            },
+        }
     }
 }
 
