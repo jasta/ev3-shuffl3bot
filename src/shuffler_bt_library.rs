@@ -5,69 +5,74 @@ use std::time::Duration;
 use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Sequence, Success, Wait, WaitForever, While};
 
 use crate::dynamic_action::DynamicAction;
-use crate::shuffle_solver::CardMove;
+use crate::shuffle_solver::{CardMove};
 use crate::shuffler_hal;
 use crate::shuffler_hal::{ArmCommand, PumpCommand, ShufflerHal};
 
-#[derive(Default)]
-pub struct ShufflerBehaviourTreeFactory {
-    options: Options,
-}
-
-#[derive(Default)]
-pub struct Options {
-    pub skip_moves: bool,
-    pub fake_hw: bool,
-}
+pub struct ShufflerBehaviourTreeLibrary;
 
 #[allow(non_snake_case)]
-impl ShufflerBehaviourTreeFactory {
-    pub fn new(options: Options) -> Self {
-        Self { options }
-    }
-
-    pub fn create_bt(&self) -> Behavior<ShufflerAction> {
-        let skip_move_with_card_wait = Duration::from_millis(if self.options.fake_hw { 0 } else { 1000 });
-        let skip_move_without_card_wait = Duration::from_millis(if self.options.fake_hw { 0 } else { 2000 });
-
+impl ShufflerBehaviourTreeLibrary {
+    /// Main BT to do the shuffling (and also for some reason the grabber test???)
+    pub fn shuffle_or_grabber_stress_bt(&self, skip_moves: bool, fake_hw: bool) -> Behavior<ShufflerAction> {
         let do_move = Sequence(vec![
             self.TakeNextMove(),
-            self.IfSkipMoves(
+            self.IfBool(
+                skip_moves,
                 self.DoNothing(),
                 self.MoveToStack(WhichStack::Src)),
             self.MakeContact(),
             While(
                 Box::new(Sequence(vec![
                     self.GrabCard(),
-                    Wait(Duration::from_millis(100).as_secs_f64()),
+                    self.WaitUnless(fake_hw, Duration::from_millis(100)),
                     self.Jiggle(),
-                    Wait(Duration::from_millis(2000).as_secs_f64()),
+                    self.WaitUnless(fake_hw, Duration::from_millis(2000)),
                     self.LiftArmToMove(),
-                    self.IfSkipMoves(
-                        Wait(skip_move_with_card_wait.as_secs_f64()),
+                    self.IfBool(
+                        skip_moves,
+                        self.WaitUnless(fake_hw, Duration::from_secs(1)),
                         self.MoveToStack(WhichStack::Dst)),
                     self.WithTimeout(Duration::from_secs(4), self.LowerCard()),
                 ])),
                 vec![self.RunningWhileInContact()],
             ),
             self.ReleaseCard(),
-            Wait(Duration::from_millis(100).as_secs_f64()),
+            self.WaitUnless(fake_hw, Duration::from_millis(100)),
             self.LiftArmToMove(),
-            self.IfSkipMoves(
-                Sequence(vec![self.StopPump(), Wait(skip_move_without_card_wait.as_secs_f64())]),
+            self.IfBool(
+                skip_moves,
+                Sequence(vec![
+                    self.StopPump(),
+                    self.WaitUnless(fake_hw, Duration::from_secs(2))]),
                 self.DoNothing()),
         ]);
 
         While(Box::new(WaitForever), vec![do_move])
     }
 
+    /// "Utility" BT that cleans up after a failed run and puts the deck back in the correct
+    /// position to sort (i.e. picks up all the stacks and puts them all back in the input stack)
+    pub fn create_cleanup_bt(&self) -> Behavior<ShufflerAction> {
+        todo!()
+    }
+
     fn TakeNextMove(&self) -> Behavior<ShufflerAction> {
         Action(DynamicAction::new(|s: &mut ShufflerState| {
-            s.current_move = s.moves_queue.pop_front();
-            println!("Next move is: {:?} (with {} after that)", s.current_move, s.moves_queue.len());
+            let moves_queue = s.moves_queue.as_mut().unwrap();
+            s.current_move = moves_queue.pop_front();
+            println!("Next move is: {:?} (with {} after that)", s.current_move, moves_queue.len());
             if s.current_move.is_some() { Success } else { Failure }
         }))
     }
+
+    // fn SetupNextStackToCleanup(&self) -> Behavior<ShufflerAction> {
+    //     Action(DynamicAction::new(|s: &mut ShufflerState| {
+    //         s.current_move = s.moves_queue.pop_front();
+    //         println!("Next move is: {:?} (with {} after that)", s.current_move, s.moves_queue.len());
+    //         if s.current_move.is_some() { Success } else { Failure }
+    //     }))
+    // }
 
     fn MakeContact(&self) -> Behavior<ShufflerAction> {
         self.WithTimeout(Duration::from_secs(3), Action(DynamicAction::new(|s: &mut ShufflerState| {
@@ -218,18 +223,25 @@ impl ShufflerBehaviourTreeFactory {
         }))))
     }
 
-    fn IfSkipMoves(
+    fn IfBool(
         &self,
+        cond: bool,
         if_true: Behavior<ShufflerAction>,
         if_false: Behavior<ShufflerAction>,
     ) -> Behavior<ShufflerAction> {
-        let skip_moves = self.options.skip_moves;
         If(
             Box::new(Action(DynamicAction::new(move |_s: &mut ShufflerState| {
-                if skip_moves { Success } else { Failure }
+                if cond { Success } else { Failure }
             }))),
             Box::new(if_true),
             Box::new(if_false))
+    }
+
+    fn WaitUnless(&self, cond: bool, duration: Duration) -> Behavior<ShufflerAction> {
+        self.IfBool(
+            !cond,
+            Wait(duration.as_secs_f64()),
+            self.DoNothing())
     }
 
     fn DoNothing(&self) -> Behavior<ShufflerAction> {
@@ -256,7 +268,8 @@ pub enum WhichStack {
 
 pub struct ShufflerState {
     hal: Box<dyn ShufflerHal>,
-    moves_queue: VecDeque<CardMove>,
+    moves_queue: Option<VecDeque<CardMove>>,
+    cleanup_stacks_queue: Option<VecDeque<usize>>,
     current_move: Option<CardMove>,
     num_rows: usize,
     row_move_command: Option<usize>,
@@ -266,12 +279,16 @@ pub struct ShufflerState {
 }
 
 impl ShufflerState {
-    pub fn new(hal: Box<dyn ShufflerHal>, moves_queue: VecDeque<CardMove>, num_rows: usize) -> Self {
+    pub fn new(args: ShuffleStateArgs) -> Self {
+        if !(args.moves_queue.is_some() ^ args.cleanup_stacks_queue.is_some()) {
+            panic!("Either moves_queue or cleanup_stacks_queue, not both!");
+        }
         Self {
-            hal,
-            moves_queue,
+            hal: args.hal,
+            moves_queue: args.moves_queue,
+            cleanup_stacks_queue: args.cleanup_stacks_queue,
             current_move: None,
-            num_rows,
+            num_rows: args.num_rows,
             row_move_command: None,
             col_move_command: None,
             arm_command: None,
@@ -280,7 +297,11 @@ impl ShufflerState {
     }
 
     pub fn is_really_success(&self) -> bool {
-        self.moves_queue.is_empty() && self.current_move.is_none()
+        let queue_is_empty =
+            self.moves_queue.as_ref().map(|q| q.is_empty())
+                .or_else(|| self.cleanup_stacks_queue.as_ref().map(|q| q.is_empty()))
+                .unwrap();
+        queue_is_empty && self.current_move.is_none()
     }
 
     pub fn set_move_to_stack_command(&mut self, stack_index: usize) -> anyhow::Result<()> {
@@ -338,7 +359,8 @@ impl ShufflerState {
         }
 
         println!("Machine state:");
-        println!("moves_queue.len: {}", self.moves_queue.len());
+        println!("moves_queue.len: {:?}", self.moves_queue.as_ref().map(|q| q.len()));
+        println!("cleanup_stacks_queue.len: {:?}", self.cleanup_stacks_queue.as_ref().map(|q| q.len()));
         println!("current_move: {:?}", self.current_move);
         println!("num_rows: {}", self.num_rows);
         println!("row_move_command: {:?}", self.row_move_command);
@@ -346,6 +368,13 @@ impl ShufflerState {
         println!("arm_command: {:?}", self.arm_command);
         println!("pump_command: {:?}", self.pump_command);
     }
+}
+
+pub struct ShuffleStateArgs {
+    pub hal: Box<dyn ShufflerHal>,
+    pub moves_queue: Option<VecDeque<CardMove>>,
+    pub cleanup_stacks_queue: Option<VecDeque<usize>>,
+    pub num_rows: usize,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
