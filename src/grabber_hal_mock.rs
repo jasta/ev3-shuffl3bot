@@ -3,12 +3,19 @@ use crate::grabber_hal::{ArmCommand, GrabberHal, PumpCommand};
 
 #[derive(Default)]
 pub struct GrabberHalMock {
+    row_move_command: Option<usize>,
+    col_move_command: Option<usize>,
     arm_command: Option<ArmCommand>,
     pump_command: Option<PumpCommand>,
 }
 
 impl GrabberHal for GrabberHalMock {
-    fn calibrate(&mut self) -> anyhow::Result<()> {
+    fn calibrate_gantry(&mut self) -> anyhow::Result<()> {
+        println!("Boop.");
+        Ok(())
+    }
+
+    fn calibrate_grabber(&mut self) -> anyhow::Result<()> {
         println!("Beep.");
         Ok(())
     }
@@ -27,17 +34,36 @@ impl GrabberHal for GrabberHalMock {
         Ok(answer)
     }
 
+    fn send_move_to_row_command(&mut self, row: usize) -> anyhow::Result<()> {
+        println!("send_move_to_row_command: {row}");
+        self.row_move_command = Some(row);
+        Ok(())
+    }
+
+    fn send_move_to_col_command(&mut self, col: usize) -> anyhow::Result<()> {
+        println!("send_move_to_col_command: {col}");
+        self.col_move_command = Some(col);
+        Ok(())
+    }
+
+    fn did_move_to_rowcol(&self) -> anyhow::Result<bool> {
+        let answer = self.row_move_command.or(self.col_move_command).is_some();
+        println!("did_move_to_rowcol: {answer}");
+        Ok(answer)
+    }
+
     fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
         println!("send_arm_command: {command:?}");
         self.arm_command = Some(command);
         Ok(())
     }
 
-    fn is_arm_idle(&self) -> anyhow::Result<bool> {
+    fn did_move_arm(&self) -> anyhow::Result<bool> {
         let answer = match self.arm_command.unwrap_or(ArmCommand::Hold) {
             ArmCommand::LowerToGrab => false,
             ArmCommand::LowerToDrop => true,
-            ArmCommand::Raise => true,
+            ArmCommand::RaiseToMove => true,
+            ArmCommand::RaiseToConfirm => true,
             ArmCommand::Hold => false,
         };
         println!("is_arm_idle: {answer}");

@@ -9,30 +9,74 @@
 //!
 //! This allows us to monitor the machine and confirm that this mechanism is working as expected.
 
-use ai_behavior::{Behavior, State, Status};
-use anyhow::anyhow;
-use ev3_shuffl3bot::grabber_bt::{GrabberAction, GrabberBehaviourTreeFactory, GrabberState};
-use ev3_shuffl3bot::grabber_hal::GrabberHal;
-use ev3_shuffl3bot::grabber_hal_factory::GrabberHalFactory;
-use input::{Event, UpdateArgs};
+use std::{env, io, thread};
+use std::collections::VecDeque;
 use std::io::Write;
 use std::time::{Duration, Instant};
-use std::{env, io, thread};
+
+use ai_behavior::{Behavior, State, Status};
+use anyhow::anyhow;
+use clap::Parser;
+use input::{Event, UpdateArgs};
+
+use ev3_shuffl3bot::grabber_bt::{GrabberAction, GrabberBehaviourTreeFactory, GrabberState, Options};
+use ev3_shuffl3bot::grabber_hal::GrabberHal;
+use ev3_shuffl3bot::grabber_hal_factory::GrabberHalFactory;
+use ev3_shuffl3bot::shuffle_solver::{CardMove, ShuffleSolver, ShuffleSolverOptions};
+
+#[derive(Parser, Debug)]
+#[clap(name = "shuffler")]
+struct Opts {
+    #[clap(short = 'n', long, default_value = "40")]
+    deck_size: usize,
+
+    #[clap(long)]
+    skip_moves: bool,
+
+    #[clap(long)]
+    fake_hw: bool,
+
+    #[clap(long)]
+    calibrate_only: bool,
+}
 
 const TICK_INTERVAL: Duration = Duration::from_millis(20);
+const NUM_ROWS: usize = 3;
+const NUM_COLS: usize = 3;
+const INPUT_STACK: usize = 0;
+const OUTPUT_STACK: usize = 2;
 
 fn main() -> anyhow::Result<()> {
-    let args: Vec<_> = env::args().collect();
-    let num_runs_str = args.get(1).cloned().unwrap_or_else(|| "50".to_owned());
-    let num_runs: u32 = num_runs_str.parse()?;
-    let mut hal = GrabberHalFactory.create_hal()?;
-    hal.calibrate()?;
-    let bt = GrabberBehaviourTreeFactory.create_bt();
+    let opts: Opts = Opts::parse();
 
-    for i in 0..num_runs {
-        println!("Starting run #{i}...");
-        hal = run_machine(bt.clone(), hal)?;
+    let mut hal = GrabberHalFactory::new_maybe_mock(opts.fake_hw).create_hal()?;
+    hal.calibrate_grabber()?;
+    if !opts.skip_moves {
+        hal.calibrate_gantry()?;
     }
+    if opts.calibrate_only {
+        return Ok(());
+    }
+    let bt_factory = GrabberBehaviourTreeFactory::new(Options {
+        skip_moves: opts.skip_moves,
+        fake_hw: opts.fake_hw,
+    });
+    let bt = bt_factory.create_bt();
+
+    let moves = if opts.skip_moves {
+        let dummy_move = CardMove { src_stack: 0, dst_stack: 0 };
+        VecDeque::from(vec![dummy_move; opts.deck_size])
+    } else {
+        let solution = ShuffleSolver::solve(ShuffleSolverOptions {
+            deck_size: opts.deck_size,
+            num_stacks: NUM_ROWS * NUM_COLS,
+            input_stack: INPUT_STACK,
+            output_stack: OUTPUT_STACK,
+        });
+        VecDeque::from(solution.required_moves)
+    };
+    println!("Generated {} moves, let's do this...", moves.len());
+    run_machine(bt, hal, moves)?;
     println!("Successful stress test!");
     Ok(())
 }
@@ -40,9 +84,10 @@ fn main() -> anyhow::Result<()> {
 fn run_machine(
     behaviour: Behavior<GrabberAction>,
     hal: Box<dyn GrabberHal>,
+    moves: VecDeque<CardMove>,
 ) -> anyhow::Result<Box<dyn GrabberHal>> {
     let mut machine: State<GrabberAction, ()> = State::new(behaviour);
-    let mut state = GrabberState::new(hal);
+    let mut state = GrabberState::new(hal, moves, NUM_ROWS);
 
     let mut dt = 0.0;
     let mut ticks = 0;
@@ -60,6 +105,7 @@ fn run_machine(
 
         match status {
             Status::Success => break Ok(()),
+            Status::Failure if state.is_really_success() => break Ok(()),
             Status::Failure => break Err(anyhow!("Unknown state failure!")),
             Status::Running => {
                 // Print that a tick happened but keep going...
