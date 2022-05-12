@@ -44,7 +44,7 @@ const TICK_INTERVAL: Duration = Duration::from_millis(20);
 const NUM_ROWS: usize = 3;
 const NUM_COLS: usize = 3;
 const INPUT_STACK: usize = 0;
-const OUTPUT_STACK: usize = 2;
+const OUTPUT_STACK: usize = 6;
 
 fn main() -> anyhow::Result<()> {
     let opts: Opts = Opts::parse();
