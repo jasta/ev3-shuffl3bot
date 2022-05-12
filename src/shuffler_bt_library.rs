@@ -33,7 +33,7 @@ impl ShufflerBehaviourTreeLibrary {
                         skip_moves,
                         self.WaitUnless(fake_hw, Duration::from_secs(1)),
                         self.MoveToStack(WhichStack::Dst)),
-                    self.WithTimeout(Duration::from_secs(4), self.LowerCard()),
+                    self.LowerCard(),
                 ])),
                 vec![self.RunningWhileInContact()],
             ),
@@ -166,7 +166,7 @@ impl ShufflerBehaviourTreeLibrary {
     }
 
     fn LowerCard(&self) -> Behavior<ShufflerAction> {
-        Action(DynamicAction::new(|s: &mut ShufflerState| {
+        self.WithTimeout(Duration::from_secs(4), Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::LowerToDrop).is_err() {
                 return Failure;
             }
@@ -175,7 +175,7 @@ impl ShufflerBehaviourTreeLibrary {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }))
+        })))
     }
 
     fn ReleaseCard(&self) -> Behavior<ShufflerAction> {
