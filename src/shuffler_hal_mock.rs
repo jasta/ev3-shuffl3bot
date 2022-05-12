@@ -1,7 +1,7 @@
 use crate::shuffler_hal;
 use crate::shuffler_hal::{ArmCommand, ShufflerHal, PumpCommand};
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ShufflerHalMock {
     row_move_command: Option<usize>,
     col_move_command: Option<usize>,
@@ -63,7 +63,8 @@ impl ShufflerHal for ShufflerHalMock {
             ArmCommand::LowerToGrab => false,
             ArmCommand::LowerToDrop => true,
             ArmCommand::RaiseToMove => true,
-            ArmCommand::RaiseToConfirm => true,
+            ArmCommand::JiggleHigh => true,
+            ArmCommand::JiggleLow => true,
             ArmCommand::Hold => false,
         };
         println!("is_arm_idle: {answer}");
@@ -78,6 +79,11 @@ impl ShufflerHal for ShufflerHalMock {
 
     fn on_tick_while_holding(&mut self) -> anyhow::Result<()> {
         println!("on_tick_while_grabbed");
+        Ok(())
+    }
+
+    fn dump(&self) -> anyhow::Result<()> {
+        println!("{self:?}");
         Ok(())
     }
 }

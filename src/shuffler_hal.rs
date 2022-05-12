@@ -1,6 +1,8 @@
+use std::fmt::Debug;
+
 pub const MIN_PRESSURE_CONTACT: u32 = 99000;
-pub const MIN_PRESSURE_GRAB: u32 = 85000;
-pub const TARGET_PRESSURE_GRAB: u32 = 70000;
+pub const MIN_PRESSURE_GRAB: u32 = 75000;
+pub const TARGET_PRESSURE_GRAB: u32 = 65000;
 
 pub trait ShufflerHal {
     fn calibrate_gantry(&mut self) -> anyhow::Result<()>;
@@ -13,6 +15,7 @@ pub trait ShufflerHal {
     fn did_move_arm(&self) -> anyhow::Result<bool>;
     fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()>;
     fn on_tick_while_holding(&mut self) -> anyhow::Result<()>;
+    fn dump(&self) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -20,7 +23,8 @@ pub enum ArmCommand {
     LowerToGrab,
     LowerToDrop,
     RaiseToMove,
-    RaiseToConfirm,
+    JiggleHigh,
+    JiggleLow,
     Hold,
 }
 

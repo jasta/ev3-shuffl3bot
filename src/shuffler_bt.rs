@@ -1,11 +1,13 @@
 use std::collections::VecDeque;
-use crate::dynamic_action::DynamicAction;
-use crate::shuffler_hal;
-use crate::shuffler_hal::{ArmCommand, ShufflerHal, PumpCommand};
-use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Sequence, Success, Wait, WaitForever, WhenAny, While};
+use std::fmt::Debug;
 use std::time::Duration;
-use futures_signals::signal::WaitFor;
+
+use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Sequence, Success, Wait, WaitForever, While};
+
+use crate::dynamic_action::DynamicAction;
 use crate::shuffle_solver::CardMove;
+use crate::shuffler_hal;
+use crate::shuffler_hal::{ArmCommand, PumpCommand, ShufflerHal};
 
 #[derive(Default)]
 pub struct ShufflerBehaviourTreeFactory {
@@ -18,22 +20,57 @@ pub struct Options {
     pub fake_hw: bool,
 }
 
+#[allow(non_snake_case)]
 impl ShufflerBehaviourTreeFactory {
     pub fn new(options: Options) -> Self {
         Self { options }
     }
 
     pub fn create_bt(&self) -> Behavior<ShufflerAction> {
-        let take_next_move = Action(DynamicAction::new(|s: &mut ShufflerState| {
+        let skip_move_with_card_wait = Duration::from_millis(if self.options.fake_hw { 0 } else { 1000 });
+        let skip_move_without_card_wait = Duration::from_millis(if self.options.fake_hw { 0 } else { 2000 });
+
+        let do_move = Sequence(vec![
+            self.TakeNextMove(),
+            self.IfSkipMoves(
+                self.DoNothing(),
+                self.MoveToStack(WhichStack::Src)),
+            self.MakeContact(),
+            While(
+                Box::new(Sequence(vec![
+                    self.GrabCard(),
+                    Wait(Duration::from_millis(100).as_secs_f64()),
+                    self.Jiggle(),
+                    Wait(Duration::from_millis(2000).as_secs_f64()),
+                    self.LiftArmToMove(),
+                    self.IfSkipMoves(
+                        Wait(skip_move_with_card_wait.as_secs_f64()),
+                        self.MoveToStack(WhichStack::Dst)),
+                    self.WithTimeout(Duration::from_secs(4), self.LowerCard()),
+                ])),
+                vec![self.RunningWhileInContact()],
+            ),
+            self.ReleaseCard(),
+            Wait(Duration::from_millis(100).as_secs_f64()),
+            self.LiftArmToMove(),
+            self.IfSkipMoves(
+                Sequence(vec![self.StopPump(), Wait(skip_move_without_card_wait.as_secs_f64())]),
+                self.DoNothing()),
+        ]);
+
+        While(Box::new(WaitForever), vec![do_move])
+    }
+
+    fn TakeNextMove(&self) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(|s: &mut ShufflerState| {
             s.current_move = s.moves_queue.pop_front();
             println!("Next move is: {:?} (with {} after that)", s.current_move, s.moves_queue.len());
             if s.current_move.is_some() { Success } else { Failure }
-        }));
+        }))
+    }
 
-        let move_to_src_stack = self.MoveToStack(WhichStack::Src);
-        let move_to_dst_stack = self.MoveToStack(WhichStack::Dst);
-
-        let make_contact = Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn MakeContact(&self) -> Behavior<ShufflerAction> {
+        self.WithTimeout(Duration::from_secs(3), Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_pump_command(PumpCommand::StartVacuum).is_err() {
                 return Failure;
             }
@@ -45,9 +82,11 @@ impl ShufflerBehaviourTreeFactory {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }));
+        })))
+    }
 
-        let running_while_in_contact = Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn RunningWhileInContact(&self) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.hal.on_tick_while_holding().is_err() {
                 return Failure;
             }
@@ -56,9 +95,11 @@ impl ShufflerBehaviourTreeFactory {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }));
+        }))
+    }
 
-        let grab_card = Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn GrabCard(&self) -> Behavior<ShufflerAction> {
+        self.WithTimeout(Duration::from_secs(4), Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::Hold).is_err() {
                 return Failure;
             }
@@ -72,10 +113,14 @@ impl ShufflerBehaviourTreeFactory {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }));
+        })))
+    }
 
-        let lift_arm_to_confirm = Action(DynamicAction::new(|s: &mut ShufflerState| {
-            if s.set_arm_command(ArmCommand::RaiseToConfirm).is_err() {
+    fn Jiggle(&self) -> Behavior<ShufflerAction> {
+        let num_jiggles = 4;
+
+        let jiggle_high = Action(DynamicAction::new(|s: &mut ShufflerState| {
+            if s.set_arm_command(ArmCommand::JiggleHigh).is_err() {
                 return Failure;
             }
             match s.hal.did_move_arm() {
@@ -85,7 +130,25 @@ impl ShufflerBehaviourTreeFactory {
             }
         }));
 
-        let lift_arm_to_move = Action(DynamicAction::new(|s: &mut ShufflerState| {
+        let jiggle_low = Action(DynamicAction::new(|s: &mut ShufflerState| {
+            if s.set_arm_command(ArmCommand::JiggleLow).is_err() {
+                return Failure;
+            }
+            match s.hal.did_move_arm() {
+                Ok(true) => Success,
+                Ok(_) => Running,
+                _ => Failure,
+            }
+        }));
+
+        self.RepeatN(num_jiggles,
+            Sequence(vec![
+                self.WithTimeout(Duration::from_secs(2), jiggle_low),
+                self.WithTimeout(Duration::from_secs(2), jiggle_high)]))
+    }
+
+    fn LiftArmToMove(&self) -> Behavior<ShufflerAction> {
+        self.WithTimeout(Duration::from_secs(4), self.WithTimeout(Duration::from_secs(4), Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::RaiseToMove).is_err() {
                 return Failure;
             }
@@ -94,9 +157,11 @@ impl ShufflerBehaviourTreeFactory {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }));
+        }))))
+    }
 
-        let lower_card = Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn LowerCard(&self) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::LowerToDrop).is_err() {
                 return Failure;
             }
@@ -105,9 +170,11 @@ impl ShufflerBehaviourTreeFactory {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }));
+        }))
+    }
 
-        let release_card = Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn ReleaseCard(&self) -> Behavior<ShufflerAction> {
+        self.WithTimeout(Duration::from_secs(5), Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_pump_command(PumpCommand::ReverseVacuum).is_err() {
                 return Failure;
             }
@@ -116,56 +183,25 @@ impl ShufflerBehaviourTreeFactory {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }));
+        })))
+    }
 
-        let stop_pump = Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn StopPump(&self) -> Behavior<ShufflerAction> {
+        Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_pump_command(PumpCommand::Stop).is_err() {
                 return Failure;
             }
             Success
-        }));
-
-        let lift_confirm_wait = if self.options.fake_hw {
-            Duration::from_millis(0)
-        } else {
-            Duration::from_millis(if self.options.skip_moves { 2000 } else { 1500 })
-        };
-
-        let skip_move_with_card_wait = Duration::from_millis(if self.options.fake_hw { 0 } else { 1000 });
-        let skip_move_without_card_wait = Duration::from_millis(if self.options.fake_hw { 0 } else { 2000 });
-
-        let do_move = Sequence(vec![
-            take_next_move,
-            self.IfSkipMoves(
-                self.DoNothing(),
-                self.WithTimeout(Duration::from_secs(5), move_to_src_stack)),
-            self.WithTimeout(Duration::from_secs(3), make_contact),
-            While(
-                Box::new(Sequence(vec![
-                    self.WithTimeout(Duration::from_secs(4), grab_card),
-                    self.WithTimeout(Duration::from_secs(4), lift_arm_to_confirm),
-                    Wait(lift_confirm_wait.as_secs_f64()),
-                    self.WithTimeout(Duration::from_secs(4), lift_arm_to_move.clone()),
-                    self.IfSkipMoves(
-                        Wait(skip_move_with_card_wait.as_secs_f64()),
-                        self.WithTimeout(Duration::from_secs(6), move_to_dst_stack)),
-                    self.WithTimeout(Duration::from_secs(4), lower_card),
-                ])),
-                vec![running_while_in_contact],
-            ),
-            self.WithTimeout(Duration::from_secs(5), release_card),
-            self.WithTimeout(Duration::from_secs(4), lift_arm_to_move),
-            self.IfSkipMoves(
-                Sequence(vec![stop_pump, Wait(skip_move_without_card_wait.as_secs_f64())]),
-                self.DoNothing()),
-        ]);
-
-        While(Box::new(WaitForever), vec![do_move])
+        }))
     }
 
-    #[allow(non_snake_case)]
+    fn RepeatN(&self, n: usize, behaviour: Behavior<ShufflerAction>) -> Behavior<ShufflerAction> {
+        // Hehe, pretty lame way to do it, but whatever :P
+        Sequence(vec![behaviour; n])
+    }
+
     fn MoveToStack(&self, which_stack: WhichStack) -> Behavior<ShufflerAction> {
-        Action(DynamicAction::new(move |s: &mut ShufflerState| {
+        self.WithTimeout(Duration::from_secs(6), self.WithTimeout(Duration::from_secs(5), Action(DynamicAction::new(move |s: &mut ShufflerState| {
             let current_move = s.current_move.as_ref().unwrap();
             let stack_index = match which_stack {
                 WhichStack::Src => current_move.src_stack,
@@ -179,10 +215,9 @@ impl ShufflerBehaviourTreeFactory {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }))
+        }))))
     }
 
-    #[allow(non_snake_case)]
     fn IfSkipMoves(
         &self,
         if_true: Behavior<ShufflerAction>,
@@ -197,14 +232,12 @@ impl ShufflerBehaviourTreeFactory {
             Box::new(if_false))
     }
 
-    #[allow(non_snake_case)]
     fn DoNothing(&self) -> Behavior<ShufflerAction> {
         Action(DynamicAction::new(|_s: &mut ShufflerState| {
             Success
         }))
     }
 
-    #[allow(non_snake_case)]
     fn WithTimeout(
         &self,
         period: Duration,
@@ -248,10 +281,6 @@ impl ShufflerState {
 
     pub fn is_really_success(&self) -> bool {
         self.moves_queue.is_empty() && self.current_move.is_none()
-    }
-
-    pub fn into_hal(self) -> Box<dyn ShufflerHal> {
-        self.hal
     }
 
     pub fn set_move_to_stack_command(&mut self, stack_index: usize) -> anyhow::Result<()> {
@@ -298,6 +327,24 @@ impl ShufflerState {
         } else {
             Ok(())
         }
+    }
+
+    pub fn dump(&self) {
+        println!("Dumping all state:");
+
+        println!("Hal state:");
+        if let Err(e) = self.hal.dump() {
+            println!("<error: {e:?}>");
+        }
+
+        println!("Machine state:");
+        println!("moves_queue.len: {}", self.moves_queue.len());
+        println!("current_move: {:?}", self.current_move);
+        println!("num_rows: {}", self.num_rows);
+        println!("row_move_command: {:?}", self.row_move_command);
+        println!("col_move_command: {:?}", self.col_move_command);
+        println!("arm_command: {:?}", self.arm_command);
+        println!("pump_command: {:?}", self.pump_command);
     }
 }
 

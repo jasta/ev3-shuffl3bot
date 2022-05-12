@@ -9,7 +9,7 @@
 //!
 //! This allows us to monitor the machine and confirm that this mechanism is working as expected.
 
-use std::{env, io, thread};
+use std::{io, thread};
 use std::collections::VecDeque;
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -85,7 +85,7 @@ fn run_machine(
     behaviour: Behavior<ShufflerAction>,
     hal: Box<dyn ShufflerHal>,
     moves: VecDeque<CardMove>,
-) -> anyhow::Result<Box<dyn ShufflerHal>> {
+) -> anyhow::Result<()> {
     let mut machine: State<ShufflerAction, ()> = State::new(behaviour);
     let mut state = ShufflerState::new(hal, moves, NUM_ROWS);
 
@@ -106,7 +106,10 @@ fn run_machine(
         match status {
             Status::Success => break Ok(()),
             Status::Failure if state.is_really_success() => break Ok(()),
-            Status::Failure => break Err(anyhow!("Unknown state failure!")),
+            Status::Failure => {
+                state.dump();
+                break Err(anyhow!("Unknown state failure!"))
+            },
             Status::Running => {
                 // Print that a tick happened but keep going...
                 if ticks % 60 != 0 {
@@ -120,7 +123,6 @@ fn run_machine(
     };
     println!();
 
-    // Oh hell, the ownership of the HAL isn't great but it's not worth fixing right now for this
-    // tool.
-    result.map(|_| state.into_hal())
+    result
 }
+
