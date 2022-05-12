@@ -128,7 +128,7 @@ impl ShufflerBehaviourTreeFactory {
         let lift_confirm_wait = if self.options.fake_hw {
             Duration::from_millis(0)
         } else {
-            Duration::from_millis(if self.options.skip_moves { 2000 } else { 750 })
+            Duration::from_millis(if self.options.skip_moves { 2000 } else { 1500 })
         };
 
         let skip_move_with_card_wait = Duration::from_millis(if self.options.fake_hw { 0 } else { 1000 });

@@ -1,6 +1,6 @@
 pub const MIN_PRESSURE_CONTACT: u32 = 99000;
-pub const MIN_PRESSURE_GRAB: u32 = 93000;
-pub const TARGET_PRESSURE_GRAB: u32 = 80000;
+pub const MIN_PRESSURE_GRAB: u32 = 85000;
+pub const TARGET_PRESSURE_GRAB: u32 = 70000;
 
 pub trait ShufflerHal {
     fn calibrate_gantry(&mut self) -> anyhow::Result<()>;

@@ -77,7 +77,7 @@ fn main() -> anyhow::Result<()> {
     };
     println!("Generated {} moves, let's do this...", moves.len());
     run_machine(bt, hal, moves)?;
-    println!("Successful stress test!");
+    println!("Success!");
     Ok(())
 }
 
