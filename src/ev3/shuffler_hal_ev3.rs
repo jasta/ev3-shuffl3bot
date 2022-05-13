@@ -42,7 +42,7 @@ impl ShufflerHalEv3 {
     const ARM_RAISE_TO_MOVE_POS: i32 = ShufflerHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT;
     const ARM_RAISE_TO_MOVE_SPEED: i32 = 600;
     const ARM_LOWER_TO_DROP_SPEED: i32 = -600;
-    const ARM_RELEASE_POS: i32 = -150;
+    const ARM_RELEASE_POS: i32 = -60;
     const ARM_LOWER_DUTY_CYCLE: i32 = -60;
     const PUMP_CREATE_VACUUM_CYCLE: i32 = -100;
     const PUMP_RELEASE_VACUUM_CYCLE: i32 = 100;
