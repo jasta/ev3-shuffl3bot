@@ -69,7 +69,8 @@ impl ShufflerBehaviourTreeResolver {
             ResolverMode::CleanupStacks => {
                 let bt = library.MoveAllCardsToStack(INPUT_STACK, self.options.fake_hw);
 
-                let cleanup_stacks_queue: Vec<_> = (0..(NUM_ROWS*NUM_COLS)).collect();
+                let mut cleanup_stacks_queue: Vec<_> = (0..(NUM_ROWS*NUM_COLS)).collect();
+                cleanup_stacks_queue.retain(|&stack| stack != INPUT_STACK);
                 let state = ShufflerState::new(ShuffleStateArgs {
                     hal,
                     num_rows: NUM_ROWS,

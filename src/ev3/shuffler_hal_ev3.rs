@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -7,6 +8,7 @@ use ev3dev_lang_rust::{Attribute, Ev3Result};
 use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
 use ev3dev_lang_rust::sensors::SensorPort;
 use pid::Pid;
+use crate::ev3::anomaly_detector::AnomalyDetector;
 
 use crate::ev3::ms_pressure_sensor::MSPressureSensor;
 use crate::shuffler_hal;
@@ -20,6 +22,7 @@ pub struct ShufflerHalEv3 {
     arm_motor: MediumMotor,
     pump_motor: LargeMotor,
     pump_pid: Pid<f64>,
+    pressure_anomaly_detector: Mutex<AnomalyDetector<i32>>,
 }
 
 impl ShufflerHalEv3 {
@@ -61,6 +64,13 @@ impl ShufflerHalEv3 {
         let limit = 100.0;
         let pump_pid = Pid::new(2.0, 0.1, 1.0, limit, limit, limit, limit, target);
 
+        let pressure_anomaly_detector = Mutex::new(AnomalyDetector {
+            sane_range: 40000..110000,
+            max_per_sample_delta: 60000,
+            last_sane_value: None,
+            recent_outliers: 0,
+        });
+
         Ok(Self {
             port_spec,
             pressure_sensor: MSPressureSensor::get(port_spec.pressure_sensor)?,
@@ -69,6 +79,7 @@ impl ShufflerHalEv3 {
             pump_motor: LargeMotor::get(port_spec.pump_motor)?,
             arm_motor: MediumMotor::get(port_spec.arm_motor)?,
             pump_pid,
+            pressure_anomaly_detector,
         })
     }
 }
@@ -101,8 +112,17 @@ impl ShufflerHal for ShufflerHalEv3 {
     }
 
     fn current_pressure_pa(&self) -> anyhow::Result<u32> {
-        let reading = self.pressure_sensor.current_pressure_pa()?;
-        Ok(u32::try_from(reading)?)
+        let raw_reading = self.pressure_sensor.current_pressure_pa()?;
+        let mut detector = self.pressure_anomaly_detector.lock().unwrap();
+        let answer = match detector.update(raw_reading) {
+            Ok(_) => raw_reading,
+            Err(_) => {
+                let last_sane = detector.last_sane_value;
+                println!("DETECTED PRESSURE ANOMALY: reading={raw_reading}, using {last_sane:?}!");
+                last_sane.unwrap()
+            },
+        };
+        Ok(u32::try_from(answer)?)
     }
 
     fn send_move_to_row_command(&mut self, row: usize) -> anyhow::Result<()> {

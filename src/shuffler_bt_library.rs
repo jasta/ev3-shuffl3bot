@@ -21,7 +21,7 @@ impl ShufflerBehaviourTreeLibrary {
                 skip_moves,
                 self.DoNothing(),
                 self.MoveToStack(WhichStack::Src)),
-            self.MakeContact(),
+            self.MakeContact(Duration::from_secs(3)),
             self.GrabAndMoveCardToDst(skip_moves, fake_hw),
             self.IfBool(
                 skip_moves,
@@ -39,9 +39,12 @@ impl ShufflerBehaviourTreeLibrary {
             self.MaybeSetupNextStackToClear(dst_stack),
             self.MoveToStack(WhichStack::Src),
             If(
-                Box::new(self.MakeContact()),
+                Box::new(self.MakeContact(Duration::from_secs(2))),
                 Box::new(self.GrabAndMoveCardToDst(false, fake_hw)),
-                Box::new(self.MarkCurrentStackCleared())),
+                Box::new(
+                    Sequence(vec![
+                        self.LiftArmToMove(),
+                        self.MarkCurrentStackCleared()]))),
         ]);
 
         self.Repeat(do_move)
@@ -105,8 +108,8 @@ impl ShufflerBehaviourTreeLibrary {
         }))
     }
 
-    fn MakeContact(&self) -> Behavior<ShufflerAction> {
-        self.WithTimeout(Duration::from_secs(3), Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn MakeContact(&self, timeout: Duration) -> Behavior<ShufflerAction> {
+        self.WithTimeout(timeout, Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_pump_command(PumpCommand::StartVacuum).is_err() {
                 return Failure;
             }
