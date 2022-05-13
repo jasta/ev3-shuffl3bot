@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use ai_behavior::Behavior;
+use log::info;
 
 use crate::shuffle_solver::{CardMove, ShuffleSolver, ShuffleSolverOptions};
 use crate::shuffler_bt_library::{ShufflerAction, ShufflerBehaviourTreeLibrary, ShufflerState, ShuffleStateArgs};
@@ -55,7 +56,7 @@ impl ShufflerBehaviourTreeResolver {
                     });
                     VecDeque::from(solution.required_moves)
                 };
-                println!("Generated {} moves, let's do this...", moves.len());
+                info!("Generated {} moves, let's do this...", moves.len());
 
                 let bt = library.MoveCards(self.options.skip_moves, self.options.fake_hw);
                 let state = ShufflerState::new(ShuffleStateArgs {

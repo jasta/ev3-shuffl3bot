@@ -1,3 +1,4 @@
+use log::{debug, info, trace};
 use crate::shuffler_hal;
 use crate::shuffler_hal::{ArmCommand, ShufflerHal, PumpCommand};
 
@@ -11,12 +12,12 @@ pub struct ShufflerHalMock {
 
 impl ShufflerHal for ShufflerHalMock {
     fn calibrate_gantry(&mut self) -> anyhow::Result<()> {
-        println!("Boop.");
+        info!("Boop.");
         Ok(())
     }
 
     fn calibrate_grabber(&mut self) -> anyhow::Result<()> {
-        println!("Beep.");
+        info!("Beep.");
         Ok(())
     }
 
@@ -30,30 +31,30 @@ impl ShufflerHal for ShufflerHalMock {
             PumpCommand::ReverseVacuum => u32::MAX,
             PumpCommand::Stop => u32::MAX,
         };
-        println!("current_pressure_pa: {answer}");
+        debug!("current_pressure_pa: {answer}");
         Ok(answer)
     }
 
     fn send_move_to_row_command(&mut self, row: usize) -> anyhow::Result<()> {
-        println!("send_move_to_row_command: {row}");
+        debug!("send_move_to_row_command: {row}");
         self.row_move_command = Some(row);
         Ok(())
     }
 
     fn send_move_to_col_command(&mut self, col: usize) -> anyhow::Result<()> {
-        println!("send_move_to_col_command: {col}");
+        debug!("send_move_to_col_command: {col}");
         self.col_move_command = Some(col);
         Ok(())
     }
 
     fn did_move_to_rowcol(&self) -> anyhow::Result<bool> {
         let answer = self.row_move_command.or(self.col_move_command).is_some();
-        println!("did_move_to_rowcol: {answer}");
+        debug!("did_move_to_rowcol: {answer}");
         Ok(answer)
     }
 
     fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
-        println!("send_arm_command: {command:?}");
+        debug!("send_arm_command: {command:?}");
         self.arm_command = Some(command);
         Ok(())
     }
@@ -67,23 +68,23 @@ impl ShufflerHal for ShufflerHalMock {
             ArmCommand::JiggleLow => true,
             ArmCommand::Hold => false,
         };
-        println!("is_arm_idle: {answer}");
+        debug!("is_arm_idle: {answer}");
         Ok(answer)
     }
 
     fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
-        println!("send_pump_command: {command:?}");
+        debug!("send_pump_command: {command:?}");
         self.pump_command = Some(command);
         Ok(())
     }
 
     fn on_tick_while_holding(&mut self) -> anyhow::Result<()> {
-        println!("on_tick_while_grabbed");
+        debug!("on_tick_while_grabbed");
         Ok(())
     }
 
     fn dump(&self) -> anyhow::Result<()> {
-        println!("{self:?}");
+        debug!("{self:?}");
         Ok(())
     }
 }

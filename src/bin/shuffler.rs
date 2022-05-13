@@ -18,6 +18,7 @@ use ai_behavior::{Behavior, State, Status};
 use anyhow::anyhow;
 use clap::{ArgEnum, Parser};
 use input::{Event, UpdateArgs};
+use log::{info, LevelFilter};
 
 use ev3_shuffl3bot::shuffler_bt_library::{ShufflerAction, ShufflerState};
 use ev3_shuffl3bot::shuffler_hal::ShufflerHal;
@@ -53,6 +54,11 @@ pub enum CliMode {
 fn main() -> anyhow::Result<()> {
     let opts: Opts = Opts::parse();
 
+    env_logger::builder()
+        .filter_level(LevelFilter::Debug)
+        .parse_default_env()
+        .init();
+
     let mut hal = ShufflerHalFactory::new_maybe_mock(opts.fake_hw).create_hal()?;
     hal.calibrate_grabber()?;
     if !opts.skip_moves {
@@ -71,6 +77,6 @@ fn main() -> anyhow::Result<()> {
 
     let holder = bt_factory.resolve(hal, opts.deck_size);
     ShufflerBehaviourTreeRunner::new(holder).run()?;
-    println!("Success!");
+    info!("Success!");
     Ok(())
 }

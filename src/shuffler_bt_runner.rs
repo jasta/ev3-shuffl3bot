@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use ai_behavior::{State, Status};
 use anyhow::anyhow;
 use input::{Event, UpdateArgs};
+use log::trace;
 
 use crate::shuffler_bt_library::ShufflerAction;
 use crate::shuffler_bt_resolver::ShufflerTreeHolder;
@@ -24,7 +25,6 @@ impl ShufflerBehaviourTreeRunner {
         let mut machine: State<ShufflerAction, ()> = State::new(self.holder.bt);
 
         let mut dt = 0.0;
-        let mut ticks = 0;
         let result = loop {
             let start = Instant::now();
             let e: Event = UpdateArgs { dt }.into();
@@ -35,7 +35,6 @@ impl ShufflerBehaviourTreeRunner {
             // TODO: This of course should be a proper RT interval!
             thread::sleep(TICK_INTERVAL);
             dt = start.elapsed().as_secs_f64();
-            ticks += 1;
 
             match status {
                 Status::Success => break Ok(()),
@@ -45,17 +44,10 @@ impl ShufflerBehaviourTreeRunner {
                     break Err(anyhow!("Unknown state failure!"))
                 },
                 Status::Running => {
-                    // Print that a tick happened but keep going...
-                    if ticks % 60 != 0 {
-                        print!(".");
-                        io::stdout().flush()?;
-                    } else {
-                        println!();
-                    }
+                    trace!("<tick!>");
                 }
             }
         };
-        println!();
 
         result
     }

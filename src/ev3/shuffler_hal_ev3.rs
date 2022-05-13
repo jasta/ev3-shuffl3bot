@@ -7,6 +7,7 @@ use conv::{ConvUtil, RoundToNearest};
 use ev3dev_lang_rust::{Attribute, Ev3Result};
 use ev3dev_lang_rust::motors::{LargeMotor, MediumMotor, MotorPort};
 use ev3dev_lang_rust::sensors::SensorPort;
+use log::{debug, info, warn};
 use pid::Pid;
 use crate::ev3::anomaly_detector::AnomalyDetector;
 
@@ -86,7 +87,7 @@ impl ShufflerHalEv3 {
 
 impl ShufflerHal for ShufflerHalEv3 {
     fn calibrate_gantry(&mut self) -> anyhow::Result<()> {
-        println!("Calibrating gantry...");
+        info!("Calibrating gantry...");
         if self.arm_motor.get_position()? > ShufflerHalEv3::X_TRANSLATION_MAX_SAFE_ARM_HEIGHT {
             return Err(anyhow!("Arm is too far raised, cannot translate on X-axis!"));
         }
@@ -97,7 +98,7 @@ impl ShufflerHal for ShufflerHalEv3 {
     }
 
     fn calibrate_grabber(&mut self) -> anyhow::Result<()> {
-        println!("Calibrating grabber...");
+        info!("Calibrating grabber...");
         calibrate_motor("arm", &self.arm_motor, ShufflerHalEv3::ARM_CALIBRATE_DUTY_CYCLE)?;
         self.pump_motor.reset()?;
 
@@ -118,7 +119,7 @@ impl ShufflerHal for ShufflerHalEv3 {
             Ok(_) => raw_reading,
             Err(_) => {
                 let last_sane = detector.last_sane_value;
-                println!("DETECTED PRESSURE ANOMALY: reading={raw_reading}, using {last_sane:?}!");
+                warn!("DETECTED PRESSURE ANOMALY: reading={raw_reading}, using {last_sane:?}!");
                 last_sane.unwrap()
             },
         };
@@ -127,7 +128,7 @@ impl ShufflerHal for ShufflerHalEv3 {
 
     fn send_move_to_row_command(&mut self, row: usize) -> anyhow::Result<()> {
         let pos = *ShufflerHalEv3::COLUMN_X_POSITIONS.get(row).unwrap();
-        println!("send_move_to_row_command: {row}, pos={pos}");
+        debug!("send_move_to_row_command: {row}, pos={pos}");
         self.x_motor.set_stop_action(MediumMotor::STOP_ACTION_BRAKE)?;
         self.x_motor.set_speed_sp(ShufflerHalEv3::X_MOTOR_TRANSLATE_SPEED)?;
         self.x_motor.run_to_abs_pos(Some(pos))?;
@@ -136,7 +137,7 @@ impl ShufflerHal for ShufflerHalEv3 {
 
     fn send_move_to_col_command(&mut self, col: usize) -> anyhow::Result<()> {
         let pos = *ShufflerHalEv3::ROW_Y_POSITIONS.get(col).unwrap();
-        println!("send_move_to_col_command: {col}, pos={pos}");
+        debug!("send_move_to_col_command: {col}, pos={pos}");
         self.y_motor.set_stop_action(MediumMotor::STOP_ACTION_BRAKE)?;
         self.y_motor.set_speed_sp(ShufflerHalEv3::Y_MOTOR_TRANSLATE_SPEED)?;
         self.y_motor.run_to_abs_pos(Some(pos))?;
@@ -152,13 +153,13 @@ impl ShufflerHal for ShufflerHalEv3 {
         for motor in [&self.x_motor, &self.y_motor] {
             let state = motor.get_state()?;
             let pos = motor.get_position()?;
-            println!("...motor: state={state:?}, pos={pos}");
+            debug!("...motor: state={state:?}, pos={pos}");
         }
         Ok(true)
     }
 
     fn send_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
-        println!("send_arm_command: {command:?}");
+        debug!("send_arm_command: {command:?}");
         match command {
             ArmCommand::LowerToGrab => {
                 self.arm_motor
@@ -202,7 +203,7 @@ impl ShufflerHal for ShufflerHalEv3 {
     }
 
     fn send_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
-        println!("send_pump_command: {command:?}");
+        debug!("send_pump_command: {command:?}");
         match command {
             PumpCommand::StartVacuum => {
                 self.pump_motor
@@ -232,14 +233,14 @@ impl ShufflerHal for ShufflerHalEv3 {
             .unwrap();
         // Refuse to go pump in reverse...
         let duty_cycle = pid_output.min(0);
-        println!("on_tick_while_grabbed: current={current}, pid gave us {pid_output}, using {duty_cycle}");
+        debug!("on_tick_while_grabbed: current={current}, pid gave us {pid_output}, using {duty_cycle}");
         self.pump_motor.set_duty_cycle_sp(duty_cycle)?;
         Ok(())
     }
 
     fn dump(&self) -> anyhow::Result<()> {
-        println!("pump_pid: {:?}", self.pump_pid);
-        println!("port_spec: {:?}", self.port_spec);
+        debug!("pump_pid: {:?}", self.pump_pid);
+        debug!("port_spec: {:?}", self.port_spec);
 
         let interesting_attributes = vec![
             ("tacho-motor",
@@ -252,7 +253,7 @@ impl ShufflerHal for ShufflerHalEv3 {
             let attr_path_str = attr_path.to_str().ok_or_else(|| anyhow!("Not UTF-8"))?;
             let attr = Attribute::from_path(attr_path_str)?;
             let value: String = attr.get()?;
-            println!("  {attribute_name}: {value}");
+            debug!("  {attribute_name}: {value}");
             Ok(())
         }
 
@@ -263,13 +264,13 @@ impl ShufflerHal for ShufflerHalEv3 {
                 .collect();
             devices.sort();
             if devices.is_empty() {
-                println!("{class_path}: no devices???");
+                debug!("{class_path}: no devices???");
             } else {
                 for device in devices {
-                    println!("{}:", device.display());
+                    debug!("{}:", device.display());
                     for attribute_name in &attributes {
                         if let Err(e) = print_attribute(device.clone(), attribute_name) {
-                            println!("  {attribute_name}: {e:?}");
+                            debug!("  {attribute_name}: {e:?}");
                         }
                     }
                 }

@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::time::Duration;
 
 use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Select, Sequence, Success, Wait, WaitForever, While};
+use log::{debug, info};
 
 use crate::dynamic_action::DynamicAction;
 use crate::shuffle_solver::{CardMove};
@@ -85,7 +86,7 @@ impl ShufflerBehaviourTreeLibrary {
         Action(DynamicAction::new(|s: &mut ShufflerState| {
             let moves_queue = s.moves_queue.as_mut().unwrap();
             s.current_move = moves_queue.pop_front();
-            println!("Next move is: {:?} (with {} after that)", s.current_move, moves_queue.len());
+            info!("Next move is: {:?} (with {} after that)", s.current_move, moves_queue.len());
             if s.current_move.is_some() { Success } else { Failure }
         }))
     }
@@ -98,7 +99,7 @@ impl ShufflerBehaviourTreeLibrary {
                     match queue.pop_front() {
                         Some(next) => {
                             s.current_move = Some(CardMove { src_stack: next, dst_stack });
-                            println!("Next moves are: {:?} (with {} after that)", s.current_move, queue.len());
+                            info!("Next moves are: {:?} (with {} after that)", s.current_move, queue.len());
                             Success
                         }
                         None => Failure,
@@ -393,22 +394,22 @@ impl ShufflerState {
     }
 
     pub fn dump(&self) {
-        println!("Dumping all state:");
+        debug!("Dumping all state:");
 
-        println!("Hal state:");
+        debug!("Hal state:");
         if let Err(e) = self.hal.dump() {
-            println!("<error: {e:?}>");
+            debug!("<error: {e:?}>");
         }
 
-        println!("Machine state:");
-        println!("moves_queue.len: {:?}", self.moves_queue.as_ref().map(|q| q.len()));
-        println!("cleanup_stacks_queue.len: {:?}", self.cleanup_stacks_queue.as_ref().map(|q| q.len()));
-        println!("current_move: {:?}", self.current_move);
-        println!("num_rows: {}", self.num_rows);
-        println!("row_move_command: {:?}", self.row_move_command);
-        println!("col_move_command: {:?}", self.col_move_command);
-        println!("arm_command: {:?}", self.arm_command);
-        println!("pump_command: {:?}", self.pump_command);
+        debug!("Machine state:");
+        debug!("moves_queue.len: {:?}", self.moves_queue.as_ref().map(|q| q.len()));
+        debug!("cleanup_stacks_queue.len: {:?}", self.cleanup_stacks_queue.as_ref().map(|q| q.len()));
+        debug!("current_move: {:?}", self.current_move);
+        debug!("num_rows: {}", self.num_rows);
+        debug!("row_move_command: {:?}", self.row_move_command);
+        debug!("col_move_command: {:?}", self.col_move_command);
+        debug!("arm_command: {:?}", self.arm_command);
+        debug!("pump_command: {:?}", self.pump_command);
     }
 }
 
