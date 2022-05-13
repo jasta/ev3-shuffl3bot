@@ -345,7 +345,6 @@ impl ShufflerState {
     pub fn set_move_to_stack_command(&mut self, stack_index: usize) -> anyhow::Result<()> {
         let row = stack_index / self.num_rows;
         let col = stack_index % self.num_rows;
-        println!("set_move_to_stack_command: {stack_index}, row={row}, col={col}");
 
         if self.row_move_command.replace(row) != Some(row) {
             self.hal.send_move_to_row_command(row)?;
@@ -358,10 +357,7 @@ impl ShufflerState {
     }
 
     pub fn has_suction_state(&self, query: SuctionState) -> bool {
-        match self.suction_state() {
-            Ok(state) if state == query => true,
-            _ => false,
-        }
+        self.suction_state().ok() == Some(query)
     }
 
     pub fn suction_state(&self) -> anyhow::Result<SuctionState> {
