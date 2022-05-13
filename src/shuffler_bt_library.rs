@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::time::Duration;
 
-use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Sequence, Success, Wait, WaitForever, While};
+use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Select, Sequence, Success, Wait, WaitForever, While};
 
 use crate::dynamic_action::DynamicAction;
 use crate::shuffle_solver::{CardMove};
@@ -21,7 +21,15 @@ impl ShufflerBehaviourTreeLibrary {
                 skip_moves,
                 self.DoNothing(),
                 self.MoveToStack(WhichStack::Src)),
-            self.MakeContact(Duration::from_secs(3)),
+            Select(vec![
+                self.MakeContact(Duration::from_secs(3)),
+                // Simple test to "try again", if this works we need to improve it a bit to
+                // check for a stalled motor and try some tricks...
+                Sequence(vec![
+                    self.StopPump(),
+                    self.LiftArmToMove(),
+                    self.MakeContact(Duration::from_secs(3))])
+                ]),
             self.GrabAndMoveCardToDst(skip_moves, fake_hw),
             self.IfBool(
                 skip_moves,
