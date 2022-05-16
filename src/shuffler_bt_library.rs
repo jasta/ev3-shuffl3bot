@@ -217,7 +217,7 @@ impl ShufflerBehaviourTreeLibrary {
     }
 
     fn LiftArmToMove(&self) -> Behavior<ShufflerAction> {
-        self.WithTimeout(Duration::from_secs(4), self.WithTimeout(Duration::from_secs(4), Action(DynamicAction::new(|s: &mut ShufflerState| {
+        self.WithTimeout(Duration::from_secs(4), Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::RaiseToMove).is_err() {
                 return Failure;
             }
@@ -226,7 +226,7 @@ impl ShufflerBehaviourTreeLibrary {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        }))))
+        })))
     }
 
     fn LowerCard(&self) -> Behavior<ShufflerAction> {
