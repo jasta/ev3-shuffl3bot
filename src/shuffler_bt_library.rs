@@ -73,12 +73,12 @@ impl ShufflerBehaviourTreeLibrary {
                             skip_moves,
                             self.WaitUnless(fake_hw, Duration::from_secs(1)),
                             self.MoveToStack(WhichStack::Dst)),
-                        self.LowerCard(),
                     ])),
                     vec![self.RunningWhileInContact()]),
                 self.ReleaseCard(),
                 self.WaitUnless(fake_hw, Duration::from_millis(100)),
                 self.LiftArmToMove(),
+                self.StopPump(),
             ])
     }
 

@@ -55,7 +55,7 @@ impl ShufflerHalEv3 {
     ];
 
     const ROW_Y_POSITIONS: [i32; 3] = [
-        172,
+        195,
         609,
         1010,
     ];
