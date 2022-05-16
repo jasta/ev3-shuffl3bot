@@ -29,6 +29,7 @@ impl ShufflerBehaviourTreeLibrary {
                 Sequence(vec![
                     self.StopPump(),
                     self.LiftArmToMove(),
+                    self.WaitUnless(fake_hw, Duration::from_secs(1)),
                     self.MakeContact(Duration::from_secs(3))])
                 ]),
             self.GrabAndMoveCardToDst(skip_moves, fake_hw),
@@ -62,11 +63,9 @@ impl ShufflerBehaviourTreeLibrary {
     fn GrabAndMoveCardToDst(&self, skip_moves: bool, fake_hw: bool) -> Behavior<ShufflerAction> {
         Sequence(
             vec![
+                self.GrabAndLiftWithRetry(fake_hw),
                 While(
                     Box::new(Sequence(vec![
-                        self.GrabCard(),
-                        self.WaitUnless(fake_hw, Duration::from_millis(100)),
-                        self.JiggleAndLiftWithRetry(fake_hw),
                         self.IfBool(
                             skip_moves,
                             self.WaitUnless(fake_hw, Duration::from_secs(1)),
@@ -80,9 +79,10 @@ impl ShufflerBehaviourTreeLibrary {
             ])
     }
 
-    fn JiggleAndLiftWithRetry(&self, fake_hw: bool) -> Behavior<ShufflerAction> {
+    fn GrabAndLiftWithRetry(&self, fake_hw: bool) -> Behavior<ShufflerAction> {
         let jiggle_and_lift = While(
             Box::new(Sequence(vec![
+                self.GrabCard(fake_hw),
                 self.JiggleAFewTimes(),
                 self.WaitUnless(fake_hw, Duration::from_millis(2000)),
                 self.LiftArmToMove(),
@@ -95,9 +95,9 @@ impl ShufflerBehaviourTreeLibrary {
             jiggle_and_lift.clone(),
             Sequence(vec![
                 self.StopPump(),
+                self.WaitUnless(fake_hw, Duration::from_secs(1)),
                 self.LiftArmToMove(),
                 self.MakeContact(Duration::from_secs(3)),
-                self.GrabCard(),
                 jiggle_and_lift,
             ]),
         ])
@@ -167,8 +167,8 @@ impl ShufflerBehaviourTreeLibrary {
         }))
     }
 
-    fn GrabCard(&self) -> Behavior<ShufflerAction> {
-        self.WithTimeout(Duration::from_secs(4), Action(DynamicAction::new(|s: &mut ShufflerState| {
+    fn GrabCard(&self, fake_hw: bool) -> Behavior<ShufflerAction> {
+        let grab_card = self.WithTimeout(Duration::from_secs(4), Action(DynamicAction::new(|s: &mut ShufflerState| {
             if s.set_arm_command(ArmCommand::Hold).is_err() {
                 return Failure;
             }
@@ -182,7 +182,9 @@ impl ShufflerBehaviourTreeLibrary {
                 Ok(_) => Running,
                 _ => Failure,
             }
-        })))
+        })));
+
+        Sequence(vec![grab_card, self.WaitUnless(fake_hw, Duration::from_millis(100))])
     }
 
     fn JiggleAFewTimes(&self) -> Behavior<ShufflerAction> {
