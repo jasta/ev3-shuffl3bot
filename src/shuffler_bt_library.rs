@@ -66,9 +66,7 @@ impl ShufflerBehaviourTreeLibrary {
                     Box::new(Sequence(vec![
                         self.GrabCard(),
                         self.WaitUnless(fake_hw, Duration::from_millis(100)),
-                        self.JiggleAFewTimes(),
-                        self.WaitUnless(fake_hw, Duration::from_millis(2000)),
-                        self.LiftArmToMove(),
+                        self.JiggleAndLiftWithRetry(fake_hw),
                         self.IfBool(
                             skip_moves,
                             self.WaitUnless(fake_hw, Duration::from_secs(1)),
@@ -80,6 +78,29 @@ impl ShufflerBehaviourTreeLibrary {
                 self.LiftArmToMove(),
                 self.StopPump(),
             ])
+    }
+
+    fn JiggleAndLiftWithRetry(&self, fake_hw: bool) -> Behavior<ShufflerAction> {
+        let jiggle_and_lift = While(
+            Box::new(Sequence(vec![
+                self.JiggleAFewTimes(),
+                self.WaitUnless(fake_hw, Duration::from_millis(2000)),
+                self.LiftArmToMove(),
+            ])),
+            vec![self.RunningWhileInContact()]);
+
+        // Try twice in case we lost contact while jiggling (which happens sometimes when the
+        // suction pump gets a little bit dirty from grabbing so many cards...)
+        Select(vec![
+            jiggle_and_lift.clone(),
+            Sequence(vec![
+                self.StopPump(),
+                self.LiftArmToMove(),
+                self.MakeContact(Duration::from_secs(3)),
+                self.GrabCard(),
+                jiggle_and_lift,
+            ]),
+        ])
     }
 
     fn TakeNextMove(&self) -> Behavior<ShufflerAction> {
