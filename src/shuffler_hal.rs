@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use serde::{Deserialize, Serialize};
 
 pub const MIN_PRESSURE_CONTACT: u32 = 99000;
 pub const MIN_PRESSURE_GRAB: u32 = 75000;
@@ -18,7 +19,7 @@ pub trait ShufflerHal {
     fn dump(&self) -> anyhow::Result<()>;
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
 pub enum ArmCommand {
     LowerToGrab,
     LowerToDrop,
@@ -28,7 +29,7 @@ pub enum ArmCommand {
     Hold,
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
 pub enum PumpCommand {
     StartVacuum,
     CreateAndHoldVacuum,

@@ -1,5 +1,6 @@
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
+use serde::{Deserialize, Serialize};
 
 pub struct ShuffleSolverOptions {
     pub deck_size: usize,
@@ -12,7 +13,7 @@ pub struct ShuffleSolution {
     pub required_moves: Vec<CardMove>,
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
 pub struct CardMove {
     pub src_stack: usize,
     pub dst_stack: usize,

@@ -1,11 +1,12 @@
 use std::{io, thread};
 use std::io::Write;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ai_behavior::{State, Status};
 use anyhow::anyhow;
 use input::{Event, UpdateArgs};
-use log::trace;
+use log::{error, trace};
 
 use crate::shuffler_bt_library::ShufflerAction;
 use crate::shuffler_bt_resolver::ShufflerTreeHolder;
@@ -21,7 +22,7 @@ impl ShufflerBehaviourTreeRunner {
         Self { holder }
     }
 
-    pub fn run(mut self) -> anyhow::Result<()> {
+    pub fn run(mut self, state_out: Option<impl AsRef<Path>>) -> anyhow::Result<()> {
         let mut machine: State<ShufflerAction, ()> = State::new(self.holder.bt);
 
         let mut dt = 0.0;
@@ -48,6 +49,13 @@ impl ShufflerBehaviourTreeRunner {
                 }
             }
         };
+
+        if let Some(state_out) = state_out {
+            log::info!("Saving state to {:?}", state_out.as_ref().display());
+            if let Err(e) = self.holder.state.save(state_out) {
+                error!("Error saving state: {e:?}!");
+            }
+        }
 
         result
     }

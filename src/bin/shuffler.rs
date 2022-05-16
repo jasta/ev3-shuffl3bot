@@ -12,6 +12,7 @@
 use std::{io, thread};
 use std::collections::VecDeque;
 use std::io::Write;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ai_behavior::{Behavior, State, Status};
@@ -42,6 +43,12 @@ struct Opts {
 
     #[clap(short = 'm', long, arg_enum, default_value = "shuffle")]
     mode: CliMode,
+
+    #[clap(short = 'i', long, help = "Initialize from run state in file, used to resume failed previous run")]
+    state_in: Option<String>,
+
+    #[clap(short = 'o', long, help = "Dump final run state into this file on failure")]
+    state_out: Option<String>,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, ArgEnum)]
@@ -69,14 +76,19 @@ fn main() -> anyhow::Result<()> {
         CliMode::Shuffle => ResolverMode::Shuffle,
         CliMode::Cleanup => ResolverMode::CleanupStacks,
     };
+
+    let state_in = opts.state_in.map(|s| Path::new(&s).to_path_buf());
     let bt_factory = ShufflerBehaviourTreeResolver::new(Options {
         skip_moves: opts.skip_moves,
         fake_hw: opts.fake_hw,
         mode: bt_mode,
+        deck_size: opts.deck_size,
+        state_in,
     });
 
-    let holder = bt_factory.resolve(hal, opts.deck_size);
-    ShufflerBehaviourTreeRunner::new(holder).run()?;
+    let state_out = opts.state_out.map(|s| Path::new(&s).to_path_buf());
+    let holder = bt_factory.resolve(hal)?;
+    ShufflerBehaviourTreeRunner::new(holder).run(state_out)?;
     info!("Success!");
     Ok(())
 }

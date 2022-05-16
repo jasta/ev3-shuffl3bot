@@ -1,9 +1,13 @@
 use std::collections::VecDeque;
 use std::fmt::Debug;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use std::path::Path;
 use std::time::Duration;
 
 use ai_behavior::{Action, Behavior, Fail, Failure, If, Running, Select, Sequence, Success, Wait, WaitForever, While};
 use log::{debug, info};
+use serde::{Deserialize, Serialize};
 
 use crate::dynamic_action::DynamicAction;
 use crate::shuffle_solver::{CardMove};
@@ -105,22 +109,22 @@ impl ShufflerBehaviourTreeLibrary {
 
     fn TakeNextMove(&self) -> Behavior<ShufflerAction> {
         Action(DynamicAction::new(|s: &mut ShufflerState| {
-            let moves_queue = s.moves_queue.as_mut().unwrap();
-            s.current_move = moves_queue.pop_front();
-            info!("Next move is: {:?} (with {} after that)", s.current_move, moves_queue.len());
-            if s.current_move.is_some() { Success } else { Failure }
+            let moves_queue = s.rt.moves_queue.as_mut().unwrap();
+            s.rt.current_move = moves_queue.pop_front();
+            info!("Next move is: {:?} (with {} after that)", s.rt.current_move, moves_queue.len());
+            if s.rt.current_move.is_some() { Success } else { Failure }
         }))
     }
 
     fn MaybeSetupNextStackToClear(&self, dst_stack: usize) -> Behavior<ShufflerAction> {
         Action(DynamicAction::new(move |s: &mut ShufflerState| {
-            match s.current_move {
+            match s.rt.current_move {
                 None => {
-                    let queue = s.cleanup_stacks_queue.as_mut().unwrap();
+                    let queue = s.rt.cleanup_stacks_queue.as_mut().unwrap();
                     match queue.pop_front() {
                         Some(next) => {
-                            s.current_move = Some(CardMove { src_stack: next, dst_stack });
-                            info!("Next moves are: {:?} (with {} after that)", s.current_move, queue.len());
+                            s.rt.current_move = Some(CardMove { src_stack: next, dst_stack });
+                            info!("Next moves are: {:?} (with {} after that)", s.rt.current_move, queue.len());
                             Success
                         }
                         None => Failure,
@@ -133,7 +137,7 @@ impl ShufflerBehaviourTreeLibrary {
 
     fn MarkCurrentStackCleared(&self) -> Behavior<ShufflerAction> {
         Action(DynamicAction::new(|s: &mut ShufflerState| {
-            s.current_move = None;
+            s.rt.current_move = None;
             Success
         }))
     }
@@ -273,7 +277,7 @@ impl ShufflerBehaviourTreeLibrary {
 
     fn MoveToStack(&self, which_stack: WhichStack) -> Behavior<ShufflerAction> {
         self.WithTimeout(Duration::from_secs(6), self.WithTimeout(Duration::from_secs(5), Action(DynamicAction::new(move |s: &mut ShufflerState| {
-            let current_move = s.current_move.as_ref().unwrap();
+            let current_move = s.rt.current_move.as_ref().unwrap();
             let stack_index = match which_stack {
                 WhichStack::Src => current_move.src_stack,
                 WhichStack::Dst => current_move.dst_stack,
@@ -338,6 +342,11 @@ pub enum WhichStack {
 
 pub struct ShufflerState {
     hal: Box<dyn ShufflerHal>,
+    rt: RuntimeState,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RuntimeState {
     moves_queue: Option<VecDeque<CardMove>>,
     cleanup_stacks_queue: Option<VecDeque<usize>>,
     current_move: Option<CardMove>,
@@ -349,39 +358,62 @@ pub struct ShufflerState {
 }
 
 impl ShufflerState {
+    pub fn from_save_state(hal: Box<dyn ShufflerHal>, state_in: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let file = File::open(state_in)?;
+        let reader = BufReader::new(file);
+        let mut rt: RuntimeState = serde_json::from_reader(reader)?;
+        let mut me = Self { hal, rt };
+        me.scrub_save_state();
+        Ok(me)
+    }
+
     pub fn new(args: ShuffleStateArgs) -> Self {
         if !(args.moves_queue.is_some() ^ args.cleanup_stacks_queue.is_some()) {
             panic!("Either moves_queue or cleanup_stacks_queue, not both!");
         }
         Self {
             hal: args.hal,
-            moves_queue: args.moves_queue,
-            cleanup_stacks_queue: args.cleanup_stacks_queue,
-            current_move: None,
-            num_rows: args.num_rows,
-            row_move_command: None,
-            col_move_command: None,
-            arm_command: None,
-            pump_command: None,
+            rt: RuntimeState {
+                moves_queue: args.moves_queue,
+                cleanup_stacks_queue: args.cleanup_stacks_queue,
+                current_move: None,
+                num_rows: args.num_rows,
+                row_move_command: None,
+                col_move_command: None,
+                arm_command: None,
+                pump_command: None,
+            },
         }
+    }
+
+    fn scrub_save_state(&mut self) {
+        if let Some(current_move) = self.rt.current_move.take() {
+            if let Some(ref mut moves_queue) = self.rt.moves_queue {
+                moves_queue.push_front(current_move);
+            }
+        }
+        self.rt.row_move_command = None;
+        self.rt.col_move_command = None;
+        self.rt.arm_command = None;
+        self.rt.pump_command = None;
     }
 
     pub fn is_really_success(&self) -> bool {
         let queue_is_empty =
-            self.moves_queue.as_ref().map(|q| q.is_empty())
-                .or_else(|| self.cleanup_stacks_queue.as_ref().map(|q| q.is_empty()))
+            self.rt.moves_queue.as_ref().map(|q| q.is_empty())
+                .or_else(|| self.rt.cleanup_stacks_queue.as_ref().map(|q| q.is_empty()))
                 .unwrap();
-        queue_is_empty && self.current_move.is_none()
+        queue_is_empty && self.rt.current_move.is_none()
     }
 
     pub fn set_move_to_stack_command(&mut self, stack_index: usize) -> anyhow::Result<()> {
-        let row = stack_index / self.num_rows;
-        let col = stack_index % self.num_rows;
+        let row = stack_index / self.rt.num_rows;
+        let col = stack_index % self.rt.num_rows;
 
-        if self.row_move_command.replace(row) != Some(row) {
+        if self.rt.row_move_command.replace(row) != Some(row) {
             self.hal.send_move_to_row_command(row)?;
         }
-        if self.col_move_command.replace(col) != Some(col) {
+        if self.rt.col_move_command.replace(col) != Some(col) {
             self.hal.send_move_to_col_command(col)?;
         }
 
@@ -401,7 +433,7 @@ impl ShufflerState {
     }
 
     pub fn set_arm_command(&mut self, command: ArmCommand) -> anyhow::Result<()> {
-        if self.arm_command.replace(command) != Some(command) {
+        if self.rt.arm_command.replace(command) != Some(command) {
             self.hal.send_arm_command(command)
         } else {
             Ok(())
@@ -409,7 +441,7 @@ impl ShufflerState {
     }
 
     pub fn set_pump_command(&mut self, command: PumpCommand) -> anyhow::Result<()> {
-        if self.pump_command.replace(command) != Some(command) {
+        if self.rt.pump_command.replace(command) != Some(command) {
             self.hal.send_pump_command(command)
         } else {
             Ok(())
@@ -425,14 +457,21 @@ impl ShufflerState {
         }
 
         debug!("Machine state:");
-        debug!("moves_queue.len: {:?}", self.moves_queue.as_ref().map(|q| q.len()));
-        debug!("cleanup_stacks_queue.len: {:?}", self.cleanup_stacks_queue.as_ref().map(|q| q.len()));
-        debug!("current_move: {:?}", self.current_move);
-        debug!("num_rows: {}", self.num_rows);
-        debug!("row_move_command: {:?}", self.row_move_command);
-        debug!("col_move_command: {:?}", self.col_move_command);
-        debug!("arm_command: {:?}", self.arm_command);
-        debug!("pump_command: {:?}", self.pump_command);
+        debug!("moves_queue.len: {:?}", self.rt.moves_queue.as_ref().map(|q| q.len()));
+        debug!("cleanup_stacks_queue.len: {:?}", self.rt.cleanup_stacks_queue.as_ref().map(|q| q.len()));
+        debug!("current_move: {:?}", self.rt.current_move);
+        debug!("num_rows: {}", self.rt.num_rows);
+        debug!("row_move_command: {:?}", self.rt.row_move_command);
+        debug!("col_move_command: {:?}", self.rt.col_move_command);
+        debug!("arm_command: {:?}", self.rt.arm_command);
+        debug!("pump_command: {:?}", self.rt.pump_command);
+    }
+
+    pub fn save(&self, state_out: impl AsRef<Path>) -> anyhow::Result<()> {
+        let file = File::create(state_out)?;
+        let writer = BufWriter::new(file);
+        serde_json::to_writer(writer, &self.rt)?;
+        Ok(())
     }
 }
 
