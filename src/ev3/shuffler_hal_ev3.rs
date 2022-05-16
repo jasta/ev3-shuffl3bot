@@ -233,7 +233,7 @@ impl ShufflerHal for ShufflerHalEv3 {
             .unwrap();
         // Refuse to go pump in reverse...
         let duty_cycle = pid_output.min(0);
-        debug!("on_tick_while_grabbed: current={current}, pid gave us {pid_output}, using {duty_cycle}");
+        debug!("on_tick_while_holding: current={current}, pid gave us {pid_output}, using {duty_cycle}");
         self.pump_motor.set_duty_cycle_sp(duty_cycle)?;
         Ok(())
     }
