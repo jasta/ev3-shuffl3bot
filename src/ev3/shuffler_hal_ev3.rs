@@ -49,15 +49,15 @@ impl ShufflerHalEv3 {
     const PUMP_RELEASE_VACUUM_CYCLE: i32 = 100;
 
     const COLUMN_X_POSITIONS: [i32; 3] = [
-        65,
-        282,
-        528,
+        26,
+        283,
+        536,
     ];
 
     const ROW_Y_POSITIONS: [i32; 3] = [
-        175,
-        625,
-        1036,
+        172,
+        609,
+        1010,
     ];
 
     pub fn new(port_spec: Ev3PortSpec) -> Ev3Result<Self> {
