@@ -51,7 +51,7 @@ impl ShufflerHalEv3 {
     const COLUMN_X_POSITIONS: [i32; 3] = [
         26,
         283,
-        536,
+        528,
     ];
 
     const ROW_Y_POSITIONS: [i32; 3] = [
